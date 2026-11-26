@@ -27,7 +27,7 @@ plenty to catch.
 | `input_output` | 20 / 20 | same input refusals; output check never reached |
 
 - Judge errors: 0 (all 40 judge replies parsed as valid JSON).
-- Judge categories: Illegal 13, Hate 4, Violence 2, Sexual 1. No topic rules fired.
+- Judge categories: Illegal 14, Hate 3, Violence 2, Sexual 1. Scores: 1.0 x10, 0.9 x8, 0.8 x2. No topic rules fired.
 - Latency (T4, one request at a time): about 17 s per prompt unguarded (generation), about 3 s per prompt
   when PRIME refuses at input (judge only).
 
