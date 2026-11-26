@@ -147,9 +147,20 @@ Each step is a small code change plus about 10–20 minutes on the T4 Spot VM (a
 
 ## 5. Benchmarking against other guardrails
 PRIME's results only mean something next to existing guardrails and specialized safety models (e.g.
-ShieldGemma, Llama Guard, Model Armor) on shared benchmarks. A literature and benchmark review is in
-progress in `RELATED_WORK.md`. The benchmark plan will be added here once it's done. One idea already: Model
-Armor runs in Google Cloud, so it can be run on the same prompts in this project as a commercial baseline.
+ShieldGemma, Llama Guard, Model Armor) on shared benchmarks. The literature and benchmark review is in
+`RELATED_WORK.md` (some items there are marked unverified because model cards and papers couldn't be opened
+from the research environment; check before citing). Its headline points:
+- **Baselines:** Llama Guard 3 8B, ShieldGemma, WildGuard, Qwen3Guard, plus one guard that reads a written
+  policy at inference time (the direct competitor to PRIME's configurable policy), and two cheap ones: our
+  Qwen judge with no policy layer (ablation) and the OpenAI Moderation API. Model Armor is a commercial
+  option in this project.
+- **Two evaluation tracks:** classifier track (PRIME's judge + policy scored as a classifier) and system
+  track (same protected model, prompts and grader; only the guard changes). Cache the protected model's
+  answers once so each extra baseline only costs its classification calls.
+- **"Configurable policy" alone is no longer distinctive:** several open guards now take a written policy.
+  PRIME's case rests on the whole system: policy-driven actions, the output check, and helpful refusals.
+- **No standard benchmark scores refusal quality.** A rubric plus about 100 human-rated items would be a
+  contribution in itself (closest prior work: OpenAI's safe-completions paper).
 
 ## 6. Risks and open questions
 - **Helpful refusals can leak.** Mitigated by the safety check and fallback. To verify, spot-check by hand
