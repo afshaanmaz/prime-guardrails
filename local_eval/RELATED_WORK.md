@@ -13,6 +13,9 @@ otherwise. Sources are numbered as [n] and listed at the end.
 
 ## 1. Summary
 
+- **Where PRIME sits.** PRIME is a harness, not a guard model. Guard classifiers such as Llama Guard and
+  ShieldGemma are a component PRIME could use as its risk sensor; its direct peers are other harnesses,
+  NeMo Guardrails above all. See §1a.
 - **Baselines.** The open guard models that are cited most often and that run on one T4/L4 are
   **Llama Guard 3** (1B/8B) [1][2], **ShieldGemma** (2B/9B) [3][4], **WildGuard** (7B) [6][7] and
   **Qwen3Guard-Gen** (0.6B/4B/8B) [9][10]. The newer **policy-following** guards read a policy written
@@ -22,10 +25,10 @@ otherwise. Sources are numbered as [n] and listed at the end.
   (released Aug 2026) [19][20]. **"Configurable policy" alone is no longer new.** Since late 2025 at
   least five open models do it, and DynaGuard (ICLR 2026) made it a research topic in its own
   right [41].
-- **What PRIME is.** PRIME is a **system**: a judge, a policy layer that maps a score to an action
+- **What PRIME is.** PRIME is a **system**: a risk sensor LLM, a policy layer that maps a score to an action
   (allow / rewrite / refuse / topic rules), an output gate and helpful refusals, wrapped around a
   protected model. Most baselines are **classifiers**. A fair comparison needs two tracks: a
-  *classifier track* (PRIME's judge plus policy, used as a classifier) and a *system track* (the same
+  *classifier track* (PRIME's risk sensor plus policy, used as a classifier) and a *system track* (the same
   protected model and harness, with each guard swapped in as the gate). Recent harness papers report
   attack success, false refusal and latency together. They find that no configuration wins on all
   three at once [44].
@@ -42,8 +45,67 @@ otherwise. Sources are numbered as [n] and listed at the end.
   - **Taxonomy and label mismatch** across benchmarks [46][47].
   - **Contamination:** one NeurIPS 2026 paper reports that guard training pools already contained 88%
     of JailbreakBench-benign and 82% of OR-Bench-hard [45].
-  - **Same family:** PRIME's judge is Qwen2.5 and one baseline is Qwen3Guard.
+  - **Same family:** PRIME's risk sensor LLM is Qwen2.5 and one baseline is Qwen3Guard.
   - **Unfair framing:** comparing a full system against bare classifiers.
+
+---
+
+## 1a. Where PRIME sits: harness vs guard models
+
+PRIME is a **harness**, not a new model. It wraps an existing protected model, intercepts each request and
+coordinates model calls (risk sensor LLM, policy, intervention LLM, monitoring) to make the whole system
+safer without retraining anything. That puts it at a different layer from Llama Guard or ShieldGemma.
+
+**The four layers where safety is usually done**
+
+| Layer | What it is | What it outputs | What happens to an unsafe request | Examples |
+|---|---|---|---|---|
+| 1. Safety-trained model | Safety trained into the model itself | Its own answer | The model refuses, or doesn't | Strong commercial chat models; Zephyr only weakly |
+| 2. Guard classifier | A separate, smaller model fine-tuned to label text against a fixed hazard taxonomy | A label: safe or unsafe, plus categories | The application blocks it, usually with a stock message. The classifier writes nothing | Llama Guard [1][2], ShieldGemma [3][4], WildGuard [6][7], Granite Guardian [13][14], Qwen3Guard [9][10] |
+| 3. Policy-reading guard | A classifier that takes a written policy at runtime and reasons over it | A label, plus its reasoning | Same as layer 2: block or allow | gpt-oss-safeguard [11][12], Nemotron Content Safety Reasoning [17] |
+| 4. Harness (rails framework) | An orchestration layer around the model: checks, policy, actions | A different final response: allowed, rewritten or refused | Policy-driven actions beyond blocking | **PRIME**, NeMo Guardrails [36][17]; managed screening APIs such as Model Armor [51] and Azure AI Content Safety [52] partly |
+
+Common industry practice is layers 1 and 2 combined, plus API filters: a safety-trained model, a guard classifier in front and/or behind it, and a stock refusal on a block.
+
+**Guard classifier vs PRIME**
+
+| | Guard classifier (Llama Guard, ShieldGemma) | PRIME (harness) |
+|---|---|---|
+| Job | Detect: "is this unsafe?" | Detect (R), decide (P), act (I), log (M), and evaluate offline (E) |
+| Possible outcomes | Block or allow | ALLOW / REWRITE / REFUSE with a contextual reply |
+| Policy | Fixed hazard taxonomy (some newer guards accept a custom one) | Thresholds plus per-topic rules, swappable without retraining |
+| How it's built | **Trained** on labelled data, so scores are calibrated | **Prompted** general LLMs, so less calibrated |
+| Speed and cost | One small forward pass | 1-2 full LLM calls per request |
+| What the user sees | A stock message, or whatever the app chooses | A response PRIME shaped |
+| How it's evaluated | Classification accuracy (F1, AUPRC) on labelled prompts and responses | Whole-system outcomes: harm, over-refusal and helpfulness of the final response |
+
+**Implications**
+- **Guard classifiers are complementary, not rivals.** PRIME's risk sensor (R) could *be* Llama Guard or
+  ShieldGemma. A trained classifier is faster and likely better calibrated than a prompted Qwen. PRIME's own
+  contribution is what happens around detection: policy, intervention actions, monitoring and evaluation.
+- **PRIME's direct competitors are other harnesses**, above all NeMo Guardrails, which also runs input and
+  output rails, can use Llama Guard or any LLM as the checker, and is configured through flows [36][17]. The
+  paper must state what PRIME adds beyond it: the explicit P-R-I-M-E structure, the rewrite and
+  contextual-refusal actions, and monitoring and evaluation built in.
+- **Harness costs are real:**
+  - Latency: PRIME added about 5 s per request on the T4 in the V1 pilot (two Qwen2.5-7B calls), against one
+    small forward pass for a classifier.
+  - Calibration: the prompted risk sensor over-flagged harmless prompts. In the pilot, 11 of 17 harmless
+    XSTest prompts scored 0.5-0.9, and 4 were refused (`results/20261126-104223/PILOT_REVIEW.md`).
+  - More moving parts that can fail: the rewrite, the refusal writer and the template fallback.
+  Layered-defence harnesses generally trade attack success against false refusal and latency [44].
+
+**Two experiments that test the harness claim** (see `DECISIONS.md` Q1 and Q11)
+1. **Risk sensor swap:** Llama Guard or ShieldGemma as PRIME's R, against the prompted Qwen risk sensor, on
+   labelled prompts. If a trained guard is better, PRIME should simply use it.
+2. **System comparison:** same protected model, prompts and evaluator LLM. Compare:
+   - the model alone
+   - the model plus a guard classifier with a stock refusal (the industry baseline)
+   - the model plus PRIME
+   - a strong safety-trained model alone
+
+   This tests whether shaping the response beats block-or-allow, and whether it beats simply using a
+   safer model.
 
 ---
 
@@ -84,7 +146,7 @@ ShieldGemma 3 or a Qwen3.5Guard** as of this search [48].
 | **Azure AI Content Safety** | Hate, sexual, violence, self-harm at severity 0–7; Prompt Shields for jailbreak / indirect attacks; custom categories trained from examples [52] | Text (both) | Per-category severity thresholds; custom categories [52] | Needs an Azure account. |
 | **Perspective API** (Jigsaw) | Toxicity scoring | Text | No | **Shuts down 31 Dec 2026** [53]. Do not use it as a baseline. |
 | **NeMo Guardrails** (NVIDIA) | Open-source *framework*: Colang flows, input/output rails, "self-check" rails using any LLM, or Llama Guard / Nemotron as the checker [36][17] | Both | **Yes** (rails and prompts are configuration) | The closest **system-level** open-source peer to PRIME. NVIDIA reports Llama Guard rails beat self-check rails [36]. |
-| **LLM-as-judge** | A general instruct model with a zero-shot safety prompt | Both | Yes (via the prompt) | GuardBench found a general instruct model of comparable size competitive with fine-tuned guards [34]. PRIME's judge *is* this, so a "plain judge, no policy layer" ablation is required. |
+| **LLM-as-judge** | A general instruct model with a zero-shot safety prompt | Both | Yes (via the prompt) | GuardBench found a general instruct model of comparable size competitive with fine-tuned guards [34]. PRIME's risk sensor LLM *is* this, so a "plain risk sensor, no policy layer" ablation is required. |
 
 ---
 
@@ -130,7 +192,7 @@ ShieldGemma 3 or a Qwen3.5Guard** as of this search [48].
 
 | Suite | What | Notes |
 |---|---|---|
-| **GuardBench** (Bassani & Sanchez, EMNLP 2024) [34][35] | 40 prompt and conversation safety datasets, 13 models evaluated; `pip install guardbench` | IBM reports Granite Guardian holding 6 of the top 10 places on its leaderboard (vendor claim) [13]. Plugging PRIME's judge in as a classifier gives broad coverage cheaply. **Don't confuse it** with a different 2025 preprint also called "GuardBench" (4,200 jailbreak prompts; ASR + FPR + P95 latency against GPT-4o-mini) [44]. |
+| **GuardBench** (Bassani & Sanchez, EMNLP 2024) [34][35] | 40 prompt and conversation safety datasets, 13 models evaluated; `pip install guardbench` | IBM reports Granite Guardian holding 6 of the top 10 places on its leaderboard (vendor claim) [13]. Plugging PRIME's risk sensor in as a classifier gives broad coverage cheaply. **Don't confuse it** with a different 2025 preprint also called "GuardBench" (4,200 jailbreak prompts; ASR + FPR + P95 latency against GPT-4o-mini) [44]. |
 | **TRACE** [60] | 18 guard models at prompt, reasoning-trace and response stages | Reports FNR and FPR separately. Finds ShieldGemma and LlamaGuard-2 over-refuse heavily [60]. |
 | Vendor leaderboards (e.g. ModernGuard-1 card) [49] | Self-reported | Don't cite as independent. |
 
@@ -178,7 +240,7 @@ rubric, apply it with an LLM judge and validate it against about 100 human-rated
   2.5% while false refusals rose from 0% to 15% [63] (GitHub project, not peer reviewed).
 
 **Protocol consequence for PRIME.** Report both views:
-1. **Classifier view.** Use PRIME's judge plus policy as a classifier: REFUSE (and REWRITE, reported
+1. **Classifier view.** Use PRIME's risk sensor plus policy as a classifier: REFUSE (and REWRITE, reported
    both ways) = unsafe. The raw score gives AUPRC. Compare against guard models on the same labelled
    sets.
 2. **System view.** Keep the same protected model (Zephyr-7B-beta), harness, grader, decoding settings
@@ -200,11 +262,11 @@ Prefer the **L4**: it fits every recommended model in fp16/bf16 one at a time. O
 | 1 | **Llama Guard 3 8B** (1B on T4) | Most-cited guard; MLCommons taxonomy; input + output | **Request Meta access on HF now** (can be slow or denied). If refused, fall back to Qwen3Guard alone. |
 | 2 | **ShieldGemma 9B** (2B on T4) | Owner asked for it; Google; policy-in-prompt | Instant license acknowledgement. Check fp16 numerics on the T4. |
 | 3 | **WildGuard 7B** | Strong on WildGuardTest; also detects refusals (useful as a grader cross-check) | Auto-approved gate. |
-| 4 | **Qwen3Guard-Gen-4B or -8B** | Recent state of the art, Apache-2.0, three-tier severity similar to PRIME's ALLOW/REWRITE/REFUSE | No gate (verify). Same family as PRIME's judge, so call that out. |
+| 4 | **Qwen3Guard-Gen-4B or -8B** | Recent state of the art, Apache-2.0, three-tier severity similar to PRIME's ALLOW/REWRITE/REFUSE | No gate (verify). Same family as PRIME's risk sensor LLM, so call that out. |
 | 5 (opt.) | **One policy-following guard: gpt-oss-safeguard-20b** (L4 only, if vLLM runs it on Ada), else **Nemotron-Content-Safety-Reasoning-4B** or **Shieldstral 3B** | The direct competitor for the "configurable policy" claim | gpt-oss on L4 is uncertain [42]. The two 4B/3B options fit either GPU. |
 
 Plus two cheap internal baselines that reviewers will expect:
-- **Plain judge**: Qwen2.5-7B with a zero-shot "is this unsafe?" prompt and no policy layer, rewrite or
+- **Plain risk sensor**: Qwen2.5-7B with a zero-shot "is this unsafe?" prompt and no policy layer, rewrite or
   topic rules. This is the ablation that shows what the "P" in PRIME adds.
 - **OpenAI omni-moderation** (free) as a commercial reference on classifier benchmarks only, if sending
   benchmark prompts to OpenAI is acceptable. Model Armor is the better commercial analogue if a GCP
@@ -221,7 +283,7 @@ Plus two cheap internal baselines that reviewers will expect:
 | B5 | **XSTest + OR-Bench-Hard-1K** (+ OR-Bench-toxic) | System + classifier | Over-refusal cost, especially for STRICT mode and topic rules |
 | B6 | **Policy-switch set** (constructed; seed from CoSApien [40] or a DynaBench subset [41]) | System | **Configurable policy**: same prompts, 2–3 policies, check the decision follows the policy |
 
-Optional breadth: run PRIME's judge through **GuardBench**'s library [35] for a 40-dataset table in the
+Optional breadth: run PRIME's risk sensor through **GuardBench**'s library [35] for a 40-dataset table in the
 appendix.
 
 ### 5c. PRIME's distinctive claims and how to test each
@@ -259,13 +321,13 @@ dominated by B4 and the helpful-refusal judging.
    training data. One paper found 88% of JBB-benign and 82% of OR-Bench-hard in guard training pools
    [45]. Baselines may look better than they generalise. Include at least one set the guards could not
    have trained on (PRIME's constructed policy-switch set; newer releases).
-4. **Same family and self-grading.** PRIME's judge (Qwen2.5-7B) both writes and checks helpful refusals
+4. **Same family and self-grading.** PRIME's risk sensor model (Qwen2.5-7B) also runs the intervention LLM that writes refusals
    (DESIGN.md §5). Qwen3Guard shares the family. Use a grader from a different family (the HarmBench
    classifier is Llama-2-based) and human spot-checks. In one 2026 study, general instruct judges
    (including Qwen2.5-7B) agreed with human labels far less than the HarmBench classifier did [56][57]
    (search snippet; exact paper attribution unverified).
 5. **Threshold choice.** Guard papers report F1 at their default threshold or at an "optimal" threshold
-   tuned on the test set [3]. Fix thresholds on a dev split, and also report AUPRC. PRIME's judge scores
+   tuned on the test set [3]. Fix thresholds on a dev split, and also report AUPRC. PRIME's risk sensor scores
    are saturated (DESIGN.md P5), which will hurt AUPRC. Calibrate first (Option 5) or report it
    honestly.
 6. **REWRITE is ambiguous.** In a binary comparison, REWRITE has to count as either "flagged" or
