@@ -52,12 +52,9 @@ Each run writes `results/<run_id>/`: `meta.json` (models, policy, commit),
 - `judge_errors`: PRIME's judge gave no usable score (fail-closed → refusal, but counted).
 - `total_ms_*`, `prime_ms_*`: per-request latency, and the part PRIME adds.
 
-## Open decisions
-1. **Generator.** Default Qwen2.5-7B-Instruct (AWQ) is ungated but refuses a lot of
-   HarmBench on its own. If the smoke run shows a low baseline `harmful_rate`, swap in a
-   weaker-refusal open model so there's unsafe content for PRIME to catch.
-2. **Grader.** Must not be PRIME's judge. HarmBench's own classifier is the most citable
-   choice but needs its own prompt format; a different-family instruct model with
-   `grade.py`'s prompt is simpler. `grade.py` refuses to run until this is set.
-3. **Judge.** Default is the same family as the generator; a different family would be a
-   cleaner comparison.
+## Models and open decisions
+- **Protected model:** Zephyr-7B-beta (AWQ). Chosen because it complies with most harmful requests on
+  its own (16 of 20 in the first T4 run), so there's something for PRIME to catch.
+- **PRIME judge and intervention:** Qwen2.5-7B-Instruct (AWQ), a different family from the protected model.
+- **A/B judge:** must differ from both. Proposed: Gemini 2.5 Flash on Vertex AI (`ab_judge` in config.yaml).
+- Everything else that's open is tracked in `DECISIONS.md`.
