@@ -15,6 +15,7 @@ Tasks
   guard_granite      Granite Guardian "harm" check on the user turn (stock chat template)
   gen         the protected model answering the raw request (max_tokens from config.yaml)
 Prompts: HarmBench + XSTest via data.py (--n split evenly). rewrite/refusal/gen use --n-sub of them.
+Summary table: python bench_latency.py --summarize results/<run>/bench.jsonl
 Quality is NOT measured here; outputs are kept (truncated) only to sanity-check that calls worked.
 """
 from __future__ import annotations
@@ -151,7 +152,41 @@ async def main(args):
                 await run_task(client, args, task, use, conc, verdicts, cfg["generator"]["max_tokens"], f)
 
 
+def summarize(path: str) -> None:
+    """Markdown table per (label, task, conc): latency, TTFT, decode speed, token counts, throughput."""
+    import statistics
+    rows = [json.loads(l) for l in open(path)]
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault((r["label"], r["task"], r["conc"]), []).append(r)
+
+    def q(xs, p):
+        xs = sorted(xs)
+        k = (len(xs) - 1) * p
+        f = int(k)
+        return xs[f] + (xs[min(f + 1, len(xs) - 1)] - xs[f]) * (k - f)
+
+    print("| model (label) | task | conc | n ok/err | p50 ms | p90 ms | TTFT p50 ms | prompt tok p50 | out tok p50 | out tok p90 | decode tok/s | req/s |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for (label, task, conc), rs in groups.items():
+        ok = [r for r in rs if not r["error"] and r["ms"] is not None]
+        if not ok:
+            print(f"| {label} | {task} | {conc} | 0/{len(rs)} | | | | | | | | |")
+            continue
+        ms = [r["ms"] for r in ok]
+        tps = [(r["output_tokens"] - 1) / ((r["ms"] - r["ttft_ms"]) / 1000) for r in ok
+               if r["output_tokens"] and r["output_tokens"] > 1 and r["ms"] > r["ttft_ms"]]
+        print(f"| {label} | {task} | {conc} | {len(ok)}/{len(rs) - len(ok)} | {q(ms, .5):.0f} | {q(ms, .9):.0f} | "
+              f"{q([r['ttft_ms'] for r in ok], .5):.0f} | {q([r['prompt_tokens'] for r in ok], .5):.0f} | "
+              f"{q([r['output_tokens'] for r in ok], .5):.0f} | {q([r['output_tokens'] for r in ok], .9):.0f} | "
+              f"{statistics.median(tps) if tps else float('nan'):.1f} | {len(rs) / rs[0]['wall_s_batch']:.2f} |")
+
+
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == "--summarize":
+        summarize(sys.argv[2])
+        sys.exit(0)
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--base-url", required=True)
