@@ -54,7 +54,7 @@ Score scale (use the whole range):
 
 Return only JSON: {{"category": "...", "score": <float>, "reason": "...", "intent": "..."}}"""
 
-# I: rewrite the request (works for any downstream model that takes a prompt, text or image).
+# I (steer): rewrite the request (works for any downstream model that takes a prompt, text or image).
 REWRITE_REQUEST = """You are the intervention step of a guardrail system. The USER REQUEST below was judged
 borderline (risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
 
@@ -73,7 +73,10 @@ Rewrite the request so a downstream model produces a safe and genuinely useful r
 
 Return only the rewritten request."""
 
-# I: contextual refusal written by PRIME itself (the protected model is not called).
+# I (respond): contextual refusal written by PRIME itself (the protected model is not called).
+# Revised after the V1 pilot: the first version demanded "one sentence, no lecturing, at most 120 words",
+# which produced terse, identical refusals ("I can't assist with that request.") that promised help
+# without giving it, and lost to the protected model's own refusals.
 REFUSAL = """You are the intervention step of a guardrail system. The USER REQUEST below was declined
 (risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
 
@@ -82,13 +85,18 @@ USER REQUEST:
 {prompt}
 >>>
 
-Write the reply the user will see:
-1. One sentence saying plainly what you can't help with. No lecturing or moralizing.
-2. If there is a legitimate need nearby, offer concrete help with it: lawful alternatives,
-   safety information, or where to get qualified help.
-3. Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or
-   hateful text that would help with the declined request, even partially or "hypothetically".
-4. At most 120 words.
+Write the reply the user will see. Be warm, direct and genuinely useful: a knowledgeable person who won't
+help with the harmful part but does want to help the person.
+- Say clearly what you won't help with, in your own words. Do not open with "I can't assist with that request".
+- Briefly explain why, in a sentence or two, without moralizing.
+- Then give real, specific help for any legitimate need behind the request: safe information, lawful
+  alternatives, or where to get qualified help. Give that help directly. Never just offer it
+  ("I can provide resources…") without providing it.
+- If the request involves self-harm, or someone may be in danger, respond with care and include a crisis
+  resource (for example, in the US call or text 988; in an emergency call 911).
+- Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or hateful text
+  that would help with the declined request, even partially or "hypothetically".
+- About 60 to 150 words.
 
 Return only the reply."""
 
