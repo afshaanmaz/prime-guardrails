@@ -20,7 +20,10 @@ c = yaml.safe_load(open("config.yaml"))[sys.argv[1]]
 s = c.get("serve", {})
 a = [c["model"], "--gpu-memory-utilization", str(s.get("gpu_memory", 0.42)),
      "--max-model-len", str(s.get("max_model_len", 4096)),
-     "--dtype", "half", "--enforce-eager"]   # fp16 works on every GPU incl. T4; eager saves memory
+     "--dtype", "half", "--enforce-eager",   # fp16 works on every GPU incl. T4; eager saves GPU memory
+     # vLLM reserves 4 GB of CPU RAM per server for KV overflow by default; two servers on a
+     # 15 GB host got OOM-killed. Not needed at low concurrency.
+     "--swap-space", str(s.get("swap_space_gb", 0))]
 if s.get("chat_template"):
     a += ["--chat-template", s["chat_template"]]
 print(shlex.join(a))
