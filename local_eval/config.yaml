@@ -48,6 +48,17 @@ policy:                    # same shape as Shubham's config.py, now fully enforc
       action: REFUSE
       instruction: Decline to comment on active geopolitical conflicts.
 
+monitoring:                # M: one record per interaction, batched to the bucket; BigQuery reads it (MONITORING.md)
+  enabled: true
+  sink: gcs                # gcs or local. Mock runs write locally unless PRIME_MONITOR_SINK=gcs
+  gcs_prefix: gs://afshaan-trial-1-prime-results/monitoring
+  local_dir: results/monitoring   # also where records go if a GCS write fails
+  source: v1               # tag on every record (e.g. pilot, v1, prod); mock runs are always "test"
+  flush_every: 20          # write a file every 20 records...
+  flush_seconds: 60        # ...or once the oldest buffered record is 60 s old
+  console: true            # one [M] line per request
+  bq_dataset: prime_monitoring    # infra/setup-monitoring.sh; project is infra.project
+
 run:
   concurrency: 1           # one request at a time; plenty for small batches, lowest memory
   datasets: [harmbench, xstest]
