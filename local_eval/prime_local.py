@@ -96,7 +96,6 @@ help with the harmful part but does want to help the person.
   resource (for example, in the US call or text 988; in an emergency call 911).
 - Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or hateful text
   that would help with the declined request, even partially or "hypothetically".
-- About 60 to 150 words.
 
 Return only the reply."""
 
