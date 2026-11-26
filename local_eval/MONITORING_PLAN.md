@@ -1,6 +1,6 @@
 # PRIME Monitoring (M): implementation plan
 
-Branch: `feature/build-monitoring` (from `eval/prime-v1` at 2753886). Status: plan approved, build in progress.
+Branch: `feature/build-monitoring` (from `eval/prime-v1` at 2753886). Status: built; see `MONITORING.md`.
 
 ## Goal
 One place that records **every interaction end to end**, plus a **dashboard** to track how requests and

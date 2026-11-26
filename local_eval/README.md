@@ -43,9 +43,14 @@ python3 report.py results/<run_id>               # REPORT.md + COMPARISON.md
 `python3 run.py --mock --limit 20`, `python3 evaluate.py results/<id>-mock --mock`, `python3 report.py results/<id>-mock`
 tests the plumbing without a GPU.
 
-Each run writes `results/<run_id>/`: `meta.json` (models, policy, commit), `traces.jsonl` (every request:
+Each run writes `results/<run_id>/`: `meta.json` (models, policy, commit), `traces.jsonl` (every request, with `request_id` and `pair_id`:
 risk verdict, action, rewritten request or refusal, output, per-step timing), `evaluator.jsonl`,
 `REPORT.md`, `COMPARISON.md` and `summary.json`.
+
+## Monitoring
+Every request (and the model-alone baseline) is recorded end to end and batched to
+`gs://afshaan-trial-1-prime-results/monitoring/`; BigQuery (`prime_monitoring`) reads it, and a Looker Studio
+dashboard charts it over time. What's recorded, how to query it and the dashboard link: `MONITORING.md`.
 
 ## Metrics (REPORT.md)
 - PRIME's action mix (ALLOW / REWRITE / REFUSE) per slice, template fallback rate, risk sensor errors.

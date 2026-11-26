@@ -8,6 +8,7 @@ this file wins.
 
 | # | Decision | Why | Date |
 |---|---|---|---|
+| D11 | Monitoring (M): PRIME writes one interaction record per request (every stage, R-P-I-model-outcome, plus the model-alone baseline in evals); the evaluator writes evaluation records linked by `pair_id`. Batched JSONL files to `gs://<bucket>/monitoring/<table>/dt=.../`, BigQuery external tables + view `interactions_with_eval`, Looker Studio dashboard. Test records tagged `source = test`. Details: `MONITORING.md` | The original audit log was never filled in, and eval traces were written only at batch end and uploaded at job end (lost on preemption). Files in the bucket need only storage write on the VM; external tables need no load jobs | 2026-11-26 |
 | D10 | Evaluator LLM: Llama 4 Maverick (Vertex AI managed API). Names follow PRIME's letters: risk sensor LLM (R), intervention LLM (I), evaluator LLM (E); 'judge' is no longer used | The evaluator must not refuse to evaluate. The managed Llama 4 endpoint has no Llama Guard filter. If it refuses or errors, switch evaluators (fallback: Phi-4 on the T4) | 2026-11-26 |
 | D9 | Image exploration runs on a separate branch, `eval/image-exploration` | Keeps V1 (text) clean | 2026-11-26 |
 | D8 | V1 eval: protected model alone vs model + PRIME, scored by a blind evaluator LLM from a different model family, plus per-response labels (harmful / safe-helpful / refusal with alternative / bare refusal / over-refusal / off-target) | Shows whether PRIME adds value over the model, and where it fails | 2026-11-26 |
@@ -36,3 +37,8 @@ this file wins.
 | Q11 | Benchmark against other guardrails | Plan in `RELATED_WORK.md` (Llama Guard, ShieldGemma, WildGuard, Qwen3Guard, Model Armor, ...) |
 | Q12 | Personal-data redaction and prompt-injection detection on input | Model Armor-style. Not measurable on HarmBench or XSTest |
 | Q13 | Human ratings to validate the evaluator LLM | About 100 items. No standard benchmark scores refusal quality, so this could be a contribution |
+| Q14 | Monitoring alert thresholds | e.g. harmful rate, fallback rate, risk sensor errors or latency above a limit. Needs a baseline from real traffic first |
+| Q15 | Drift detection on risk scores and the action mix | Compare score distributions per week or per policy hash |
+| Q16 | Retention and redaction of prompts and answers in monitoring records | Records are stored verbatim today, including harmful content; needs a retention period and PII redaction before production |
+| Q17 | Production serving and the `prod` source | Monitoring is built for it (`Prime.run(..., monitor)`), but there is no serving path yet |
+| Q18 | Dashboard as a reusable template | Once the Looker Studio report is built, use its id as `c.reportId` in the Linking API URL so new reports come with the charts |
