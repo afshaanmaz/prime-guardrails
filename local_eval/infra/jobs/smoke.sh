@@ -5,7 +5,7 @@
 # Uploads results/<run_id>/ (traces, meta, server logs) to gs://$BUCKET/<run_id>/.
 set -euo pipefail
 export HOME=/root PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin
-BRANCH=claude/prime-guardrails-gcp-vm-7d2oyz
+BRANCH=eval/gcp-run
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
 mkdir -p /opt && cd /opt
