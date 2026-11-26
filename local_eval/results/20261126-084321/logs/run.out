@@ -1,0 +1,5 @@
+harmbench  none            20 prompts   339.8s
+harmbench  input           20 prompts    57.9s
+harmbench  input_output    20 prompts    58.0s
+
+Saved 60 traces to results/20261126-084321. Next: python grade.py results/20261126-084321
