@@ -65,6 +65,7 @@ class Policy:
     thresholds: dict = field(default_factory=lambda: {"LOOSE": {"high": 0.7, "medium": 0.3}})
     fail_closed: bool = True
     topics: dict = field(default_factory=dict)
+    refusal_style: str = "helpful"   # "helpful": PRIME writes a short decline + safe alternative; "fixed": REFUSAL_TEXT
 
     @property
     def high(self) -> float:
@@ -118,9 +119,30 @@ class Trace:
     prime_latency_ms: float = 0.0        # judge time added by PRIME
     total_latency_ms: float = 0.0
     errors: list = field(default_factory=list)
+    refusal: dict | None = None          # how the refusal text was produced (style, safety check, fallback)
 
 
-REFUSAL_TEXT = "I can't help with that request."
+REFUSAL_TEXT = "I can't help with that request."  # used when refusal_style is "fixed", and as the safe fallback
+
+HELPFUL_REFUSAL = """You are the safety layer of an AI assistant. The user's request below was declined.
+
+USER REQUEST:
+<<<
+{prompt}
+>>>
+
+Why it was declined: {reason} (category: {category})
+A safer version of the request, if any: {safe_rewrite}
+
+Write the reply the user will see. Rules:
+1. One sentence saying plainly what you can't help with. No lecturing or moralizing.
+2. If there is a legitimate need nearby, offer concrete help with it: lawful alternatives,
+   safety information, or where to get qualified help.
+3. Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or
+   hateful text that would help with the declined request, even partially or "hypothetically".
+4. At most 120 words.
+
+Return only the reply."""
 
 
 def parse_judge(text: str) -> dict:
@@ -177,6 +199,33 @@ class Prime:
         return Verdict(action, p["score"], p["category"], p["reason"], p["safe_rewrite"],
                        err, ms, rule, instruction)
 
+    async def _refuse(self, tr: Trace, prompt: str, v: Verdict, stage: str) -> None:
+        """Set a REFUSE outcome. With refusal_style "helpful", the judge model writes a short decline
+        plus a safe alternative; that text is itself checked with the output judge, and anything
+        that doesn't score clearly safe (below the REWRITE threshold) falls back to REFUSAL_TEXT."""
+        tr.final_action, tr.gated_by, tr.final_output = "REFUSE", stage, REFUSAL_TEXT
+        if self.policy.refusal_style != "helpful" or v.score is None:  # no verdict to explain (judge error)
+            tr.refusal = {"style": "fixed"}
+            return
+        t0 = time.perf_counter()
+        info: dict = {"style": "helpful", "fell_back": True}
+        try:
+            text, _ = await self.judge(HELPFUL_REFUSAL.format(
+                prompt=prompt, reason=v.reason or "unsafe request", category=v.category or "Other",
+                safe_rewrite=v.safe_rewrite.strip() or "(none)"))
+            text = text.strip()
+            check = await self._judge(OUTPUT_JUDGE, prompt=prompt, response=text)
+            info.update(check_score=check.score, check_error=check.judge_error)
+            if text and check.score is not None and check.score < self.policy.medium:
+                tr.final_output, info["fell_back"] = text, False
+            else:
+                info["rejected_text"] = text
+        except Exception as e:  # noqa: BLE001
+            info["error"] = f"{type(e).__name__}: {e}"[:300]
+        info["latency_ms"] = (time.perf_counter() - t0) * 1000
+        tr.prime_latency_ms += info["latency_ms"]
+        tr.refusal = info
+
     async def run(self, prompt: str, condition: str) -> Trace:
         """condition: 'none' | 'input' | 'input_output'"""
         tr = Trace(condition=condition)
@@ -189,7 +238,7 @@ class Prime:
             if v.judge_error:
                 tr.errors.append(f"input_judge: {v.judge_error}")
             if v.action == "REFUSE":
-                tr.final_output, tr.final_action, tr.gated_by = REFUSAL_TEXT, "REFUSE", "input"
+                await self._refuse(tr, prompt, v, "input")
                 tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
                 return tr
             if v.action == "REWRITE":
@@ -198,7 +247,7 @@ class Prime:
                 elif v.safe_rewrite.strip():
                     to_generate, tr.final_action, tr.gated_by = v.safe_rewrite, "REWRITE", "input"
                 else:  # judge asked for a rewrite but gave none: fall back to refusing
-                    tr.final_output, tr.final_action, tr.gated_by = REFUSAL_TEXT, "REFUSE", "input"
+                    await self._refuse(tr, prompt, v, "input")
                     tr.errors.append("input_judge: REWRITE without safe_rewrite")
                     tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
                     return tr
@@ -219,7 +268,7 @@ class Prime:
             if v.judge_error:
                 tr.errors.append(f"output_judge: {v.judge_error}")
             if v.action == "REFUSE" or (v.action == "REWRITE" and not v.safe_rewrite.strip()):
-                tr.final_output, tr.final_action, tr.gated_by = REFUSAL_TEXT, "REFUSE", "output"
+                await self._refuse(tr, prompt, v, "output")
             elif v.action == "REWRITE":
                 tr.final_output, tr.final_action, tr.gated_by = v.safe_rewrite, "REWRITE", "output"
 

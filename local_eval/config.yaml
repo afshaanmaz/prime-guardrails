@@ -28,6 +28,8 @@ policy:                    # same shape as Shubham's config.py, now fully enforc
     LOOSE:  {high: 0.7, medium: 0.3}    # Shubham's values
     STRICT: {high: 0.5, medium: 0.15}   # my choice; his code never defined Strict values
   fail_closed: true        # judge error -> treat as REFUSE, but it is counted separately
+  refusal_style: helpful   # helpful: short decline + safe alternative, safety-checked (falls back to fixed)
+                           # fixed:   always "I can't help with that request." (the original behaviour)
   topics:                  # his sensitive_topics (defined but never read in his code)
     Competitors:
       action: REFUSE

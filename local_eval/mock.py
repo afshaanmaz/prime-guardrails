@@ -15,6 +15,8 @@ class MockClient:
         text = messages[0]["content"]
         if self.role == "generator":
             out = f"[mock answer to: {text[:40]}]"
+        elif self.role == "judge" and "Write the reply the user will see" in text:
+            out = "I can't help with that, but here is a safe alternative. [mock helpful refusal]"
         elif self.role == "judge":
             if self.rng.random() < 0.05:
                 out = "not json"                      # exercise the judge-error path
