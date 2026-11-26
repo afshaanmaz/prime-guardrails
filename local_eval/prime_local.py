@@ -3,7 +3,7 @@
 PRIME = Policy, Risk, Intervention, Monitoring, Evaluation. Ported from
 bhagwat-shubham/prime-guardrails to OpenAI-compatible local servers. Per request:
 
-  R  Risk:          one judge call scores the request (category, 0-1 risk, reason, likely intent).
+  R  Risk:          one risk sensor LLM call scores the request (category, 0-1 risk, reason, likely intent).
   P  Policy:        thresholds + per-topic rules pick ALLOW / REWRITE / REFUSE.
   I  Intervention:  ALLOW   -> the protected model gets the original request.
                     REWRITE -> one Intervention call rewrites the REQUEST to keep its legitimate goal
@@ -13,7 +13,7 @@ bhagwat-shubham/prime-guardrails to OpenAI-compatible local servers. Per request
                     If the Intervention call fails, a per-category template is used (rare; logged).
   M  Monitoring:    every Trace records the original request, risk verdict, action, rewrite or
                     refusal, fallbacks and per-step latency.
-  E  Evaluation:    run.py (model alone vs model + PRIME), judge_ab.py, report.py.
+  E  Evaluation:    run.py (model alone vs model + PRIME), evaluate.py (evaluator LLM), report.py.
 
 At most two PRIME model calls per request (Risk, plus Intervention when not ALLOW). Design
 decisions and open questions: DECISIONS.md.
@@ -31,7 +31,7 @@ CATEGORIES = ["Safe", "Violence", "Sexual", "Illegal", "Self-harm", "Hate", "Pri
 
 # R: the risk sensor. The score scale is spelled out so scores spread across the range instead of
 # clustering near 1.0 (deliberately no example prompts, to avoid overlap with benchmark items).
-RISK_JUDGE = """You are the risk sensor of a guardrail system. Assess the risk of fulfilling the USER REQUEST.
+RISK_SENSOR = """You are the risk sensor of a guardrail system. Assess the risk of fulfilling the USER REQUEST.
 
 USER REQUEST:
 <<<
@@ -160,7 +160,7 @@ class Verdict:
     category: str | None
     reason: str | None
     intent: str
-    judge_error: str | None
+    error: str | None
     latency_ms: float
     topic_rule: str | None = None
     topic_instruction: str | None = None
@@ -185,10 +185,10 @@ class Trace:
     errors: list = field(default_factory=list)
 
 
-def parse_judge(text: str) -> dict:
+def parse_risk(text: str) -> dict:
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
-        raise ValueError("no JSON object in judge reply")
+        raise ValueError("no JSON object in risk sensor reply")
     obj = json.loads(m.group(0))
     score = float(obj["score"])
     if not 0.0 <= score <= 1.0:
@@ -222,18 +222,18 @@ class Chat:
 
 
 class Prime:
-    def __init__(self, generator: Chat, judge: Chat, policy: Policy, intervener: Chat | None = None):
-        # The Intervention step runs on the judge's model by default (no extra GPU memory),
+    def __init__(self, generator: Chat, risk_sensor: Chat, policy: Policy, intervener: Chat | None = None):
+        # The Intervention step runs on the risk sensor's model by default (no extra GPU memory),
         # with its own prompts.
-        self.gen, self.judge, self.policy = generator, judge, policy
-        self.intervener = intervener or judge
+        self.gen, self.sensor, self.policy = generator, risk_sensor, policy
+        self.intervener = intervener or risk_sensor
 
     async def risk(self, prompt: str) -> Verdict:
         """R + P."""
         t0 = time.perf_counter()
         try:
-            text, _ = await self.judge(RISK_JUDGE.format(cats=CATEGORIES, prompt=prompt))
-            p, err = parse_judge(text), None
+            text, _ = await self.sensor(RISK_SENSOR.format(cats=CATEGORIES, prompt=prompt))
+            p, err = parse_risk(text), None
         except Exception as e:  # noqa: BLE001 - every failure is recorded, none hidden
             p, err = {"score": None, "category": None, "reason": None, "intent": ""}, f"{type(e).__name__}: {e}"[:300]
         action, rule, instruction = self.policy.decide(p["score"], p["category"])
@@ -263,12 +263,12 @@ class Prime:
         if condition == "prime":
             v = await self.risk(prompt)
             tr.risk, tr.risk_ms = asdict(v), v.latency_ms
-            if v.judge_error:
-                tr.errors.append(f"risk_judge: {v.judge_error}")
+            if v.error:
+                tr.errors.append(f"risk_sensor: {v.error}")
             if v.action in ("REWRITE", "REFUSE"):
                 t0 = time.perf_counter()
                 try:
-                    if v.score is None:  # judge failed and policy fails closed: nothing to write from
+                    if v.score is None:  # risk sensor failed and policy fails closed: nothing to write from
                         raise ValueError("no risk verdict")
                     text = await self._intervene(REWRITE_REQUEST if v.action == "REWRITE" else REFUSAL, prompt, v)
                     if v.action == "REWRITE":
@@ -276,7 +276,7 @@ class Prime:
                     else:
                         tr.action, tr.refusal_source, tr.final_output = "REFUSE", "intervention", text
                 except Exception as e:  # noqa: BLE001
-                    reason = "judge_error" if v.score is None else f"intervention_failed: {type(e).__name__}: {e}"[:200]
+                    reason = "risk_sensor_error" if v.score is None else f"intervention_failed: {type(e).__name__}: {e}"[:200]
                     tr.errors.append(f"intervention: {reason}")
                     self._template_refusal(tr, v, reason)  # fail closed, but still category-specific
                 tr.intervention_ms = (time.perf_counter() - t0) * 1000

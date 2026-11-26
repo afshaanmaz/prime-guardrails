@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Starts the protected model (generator) and PRIME's judge with vLLM on one GPU.
+# Starts the protected model (generator) and PRIME's risk sensor LLM with vLLM on one GPU.
 # Each model's GPU memory share, context length and optional chat template come from
-# its `serve:` block in config.yaml. The judge starts only once the generator is up, so
+# its `serve:` block in config.yaml. The risk sensor starts only once the generator is up, so
 # the two don't race for memory while loading.
 # Usage: ./serve.sh            (reads config.yaml)    ./serve.sh stop
 set -euo pipefail
@@ -41,5 +41,5 @@ EOF
 }
 
 start generator 8001
-start judge 8002
+start risk_sensor 8002
 nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader

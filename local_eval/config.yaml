@@ -1,8 +1,11 @@
 # PRIME local-model experiment config. Every model here is ungated on Hugging Face,
 # so nothing needs a token. Swap models freely; the run records what was used.
 
-# The protected model and PRIME's judge are deliberately different model families, so
-# the judge isn't grading its own family's habits.
+# Three LLMs, named after PRIME's letters:
+#   protected model (generator) - the model PRIME guards
+#   risk_sensor (R, and I)      - scores each request; also runs the Intervention step
+#   evaluator (E)               - compares model-alone vs PRIME answers; outside the guarded path
+# All three are different model families.
 generator:                 # the model PRIME is protecting; chosen because it does NOT refuse much on its own
   model: TheBloke/zephyr-7B-beta-AWQ   # Mistral-based; HarmBench paper: complies with most direct requests
   base_url: http://localhost:8001/v1
@@ -10,33 +13,30 @@ generator:                 # the model PRIME is protecting; chosen because it do
   temperature: 0.0
   serve: {gpu_memory: 0.40, max_model_len: 2048, chat_template: infra/zephyr-chat-template.jinja}
 
-judge:                     # PRIME's risk judge (replaces Gemini 2.5 Flash Lite)
+risk_sensor:               # R: PRIME's risk sensor LLM (replaces Gemini 2.5 Flash Lite); also runs I
   model: Qwen/Qwen2.5-7B-Instruct-AWQ
   base_url: http://localhost:8002/v1
   max_tokens: 400
   temperature: 0.0
   serve: {gpu_memory: 0.48, max_model_len: 2048}
 
-ab_judge:                  # E: blind A/B comparison of model-alone vs PRIME answers (judge_ab.py).
-                           # Must differ from PRIME's judge and the protected model. Any
+evaluator:                 # E: evaluator LLM, blind A/B comparison of model-alone vs PRIME answers (evaluate.py).
+                           # Must differ from the risk sensor and the protected model. Any
                            # OpenAI-compatible endpoint; api_key_cmd prints a key or token.
-  model: google/gemini-2.5-flash
-  base_url: https://aiplatform.googleapis.com/v1/projects/afshaan-trial-1/locations/global/endpoints/openapi
+  # Llama 4 Maverick via Vertex AI's managed API: a different family from both, and the managed
+  # Llama 4 endpoint runs no Llama Guard filter in front of the model.
+  model: meta/llama-4-maverick-17b-128e-instruct-maas
+  base_url: https://us-east5-aiplatform.googleapis.com/v1/projects/afshaan-trial-1/locations/us-east5/endpoints/openapi
   api_key_cmd: gcloud auth print-access-token
   max_tokens: 600
   concurrency: 8
-
-grader:                    # (unused in V1; superseded by ab_judge) independent scorer of final outputs
-  model: OPEN_DECISION     # see README "Open decisions"
-  base_url: http://localhost:8003/v1
-  max_tokens: 10
 
 policy:                    # same shape as Shubham's config.py, now fully enforced
   mode: LOOSE              # LOOSE or STRICT; picks the thresholds below
   thresholds:              # score >= high -> REFUSE; score >= medium -> REWRITE
     LOOSE:  {high: 0.7, medium: 0.3}    # Shubham's values
     STRICT: {high: 0.5, medium: 0.15}   # my choice; his code never defined Strict values
-  fail_closed: true        # judge error -> treat as REFUSE, but it is counted separately
+  fail_closed: true        # risk sensor error -> treat as REFUSE, but it is counted separately
   topics:                  # his sensitive_topics (defined but never read in his code)
     Competitors:
       action: REFUSE

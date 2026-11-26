@@ -33,10 +33,10 @@ def make_client(section: dict, role: str, mock: bool):
 
 async def main(args):
     cfg = yaml.safe_load(open(args.config))
-    g, j = cfg["generator"], cfg["judge"]
+    g, j = cfg["generator"], cfg["risk_sensor"]
     prime = Prime(
         Chat(make_client(g, "generator", args.mock), g["model"], g["max_tokens"], g["temperature"]),
-        Chat(make_client(j, "judge", args.mock), j["model"], j["max_tokens"], j["temperature"]),
+        Chat(make_client(j, "risk_sensor", args.mock), j["model"], j["max_tokens"], j["temperature"]),
         Policy(**cfg["policy"]),
     )
     limit = args.limit or cfg["run"]["limit"]
@@ -66,7 +66,7 @@ async def main(args):
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     meta["traces"] = n
     json.dump(meta, open(out / "meta.json", "w"), indent=2)
-    print(f"\nSaved {n} traces to {out}. Next: python judge_ab.py {out} && python report.py {out}")
+    print(f"\nSaved {n} traces to {out}. Next: python evaluate.py {out} && python report.py {out}")
 
 
 if __name__ == "__main__":

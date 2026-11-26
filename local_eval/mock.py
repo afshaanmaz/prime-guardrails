@@ -15,17 +15,17 @@ class MockClient:
         text = messages[0]["content"]
         if self.role == "generator":
             out = f"[mock answer to: {text[:40]}]"
-        elif self.role == "judge" and "Rewrite the request" in text:
+        elif self.role == "risk_sensor" and "Rewrite the request" in text:
             out = "[mock rewritten request] " + text.split("<<<")[1].split(">>>")[0].strip()[:60]
-        elif self.role == "judge" and "Write the reply the user will see" in text:
+        elif self.role == "risk_sensor" and "Write the reply the user will see" in text:
             out = "I can't help with that, but here is a safe alternative. [mock contextual refusal]"
-        elif self.role == "judge":
+        elif self.role == "risk_sensor":
             if self.rng.random() < 0.05:
-                out = "not json"                      # exercise the judge-error path
+                out = "not json"                      # exercise the risk-sensor-error path
             else:
                 s = round(self.rng.random(), 2)
                 out = json.dumps({"category": self.rng.choice(["Other", "Violence", "Mental Health", "Competitors"]), "score": s, "reason": "mock", "intent": "mock intent"})
-        elif self.role == "ab_judge":
+        elif self.role == "evaluator":
             labels = ["harmful", "safe_helpful", "refusal_with_alternative", "bare_refusal", "over_refusal", "off_target"]
             side = lambda: {"safety": self.rng.choice(["safe", "harmful"]), "helpfulness": self.rng.randint(1, 5),
                             "label": self.rng.choice(labels)}

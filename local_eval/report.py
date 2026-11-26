@@ -1,9 +1,9 @@
-"""E: turn a run (traces.jsonl + ab.jsonl) into a report and a side-by-side table.
+"""E: turn a run (traces.jsonl + evaluator.jsonl) into a report and a side-by-side table.
 
   python report.py results/<run_id>
 Writes REPORT.md (summary, PRIME action mix, win/tie/loss, harm and over-refusal rates, failure
 modes, every loss), COMPARISON.md (one row per request) and summary.json. Works without
-ab.jsonl too (no verdict columns then).
+evaluator.jsonl too (no verdict columns then).
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def load(run_dir: Path):
     by: dict = {}
     for t in traces:
         by.setdefault(t["id"], {})[t["condition"]] = t
-    ab_path = run_dir / "ab.jsonl"
+    ab_path = run_dir / "evaluator.jsonl"
     ab = {r["id"]: r for r in map(json.loads, open(ab_path))} if ab_path.exists() else {}
     return meta, by, ab
 
@@ -64,8 +64,8 @@ def summarize(by: dict, ab: dict) -> list[dict]:
             "allow": pct(acts["ALLOW"], len(pr)), "rewrite": pct(acts["REWRITE"], len(pr)),
             "refuse": pct(acts["REFUSE"], len(pr)),
             "template_fallback": f"{sum(t['refusal_source'] == 'template' for t in refusals)}/{len(refusals)}",
-            "risk_judge_errors": sum(any(e.startswith("risk_judge") for e in t["errors"]) for t in pr),
-            "judged": len(v), "ab_errors": sum(1 for i in ids if i in ab and "error" in ab[i]),
+            "risk_sensor_errors": sum(any(e.startswith("risk_sensor") for e in t["errors"]) for t in pr),
+            "evaluated": len(v), "evaluator_errors": sum(1 for i in ids if i in ab and "error" in ab[i]),
         }
         if v:
             row.update({
@@ -94,17 +94,17 @@ def report(meta, by, ab, table) -> str:
     cfg, pol = meta["config"], meta["config"]["policy"]
     th = pol["thresholds"][pol["mode"]]
     L = [f"# PRIME run {meta['run_id']}", "",
-         f"- Protected model: `{cfg['generator']['model']}`; PRIME judge and intervention: `{cfg['judge']['model']}`",
+         f"- Protected model: `{cfg['generator']['model']}`; risk sensor + intervention LLM: `{cfg['risk_sensor']['model']}`",
          f"- Policy {pol['mode']}: REFUSE if risk ≥ {th['high']}, REWRITE if ≥ {th['medium']}, else ALLOW",
-         f"- A/B judge: `{cfg.get('ab_judge', {}).get('model', 'n/a') if ab else 'not run'}` (blind, random A/B order)",
+         f"- Evaluator LLM: `{cfg.get('evaluator', {}).get('model', 'n/a') if ab else 'not run'}` (blind, random A/B order)",
          f"- Code `{meta.get('commit')}`; {len(by)} requests × 2 conditions (model alone, model + PRIME)", "",
          "## What PRIME did", ""]
-    L += md_table(table, ["slice", "n", "allow", "rewrite", "refuse", "template_fallback", "risk_judge_errors",
+    L += md_table(table, ["slice", "n", "allow", "rewrite", "refuse", "template_fallback", "risk_sensor_errors",
                           "prime_ms_p50", "prime_ms_p90", "total_ms_p50_model", "total_ms_p50_prime"])
     if ab:
-        L += ["", "## Did PRIME beat the model alone? (A/B judge)", ""]
-        L += md_table(table, ["slice", "judged", "prime_wins", "ties", "model_wins", "harmful_model", "harmful_prime",
-                              "over_refusal_model", "over_refusal_prime", "helpful_model", "helpful_prime", "ab_errors"])
+        L += ["", "## Did PRIME beat the model alone? (evaluator LLM)", ""]
+        L += md_table(table, ["slice", "evaluated", "prime_wins", "ties", "model_wins", "harmful_model", "harmful_prime",
+                              "over_refusal_model", "over_refusal_prime", "helpful_model", "helpful_prime", "evaluator_errors"])
         v = [x for x in ab.values() if "error" not in x]
         acts = defaultdict(Counter)
         for x in v:
@@ -121,7 +121,7 @@ def report(meta, by, ab, table) -> str:
         losses = [x for x in v if x["winner"] == "model"]
         for tag, n in Counter((x.get("failure_mode") or "unspecified").strip().lower() for x in losses).most_common():
             L.append(f"- {tag}: {n}")
-        L += ["", "### Every loss", "", "| id | slice | PRIME action | request | judge's reason |", "|---|---|---|---|---|"]
+        L += ["", "### Every loss", "", "| id | slice | PRIME action | request | evaluator's reason |", "|---|---|---|---|---|"]
         for x in losses:
             t = by[x["id"]]["prime"]
             L.append(f"| {x['id']} | {slice_of(t)} | {t['action']} | {cell(t['prompt'][:140])} | {cell(x.get('reason'))} |")
@@ -131,7 +131,7 @@ def report(meta, by, ab, table) -> str:
 def comparison(meta, by, ab) -> str:
     L = [f"# Side-by-side: run {meta['run_id']}", "",
          "> **Content warning:** the \"model alone\" column contains raw answers to harmful benchmark requests, kept verbatim for evaluation.", "",
-         "| # | Slice / category | Request | Model alone | PRIME | A/B verdict |", "|---|---|---|---|---|---|"]
+         "| # | Slice / category | Request | Model alone | PRIME | Evaluator verdict |", "|---|---|---|---|---|---|"]
     for n, (rid, c) in enumerate(by.items(), 1):
         if "prime" not in c:
             continue
@@ -145,7 +145,7 @@ def comparison(meta, by, ab) -> str:
         prime.append(f"*User sees:* {cell(p['final_output'])}")
         x = ab.get(rid, {})
         if "error" in x:
-            verdict = f"judge error: {cell(x['error'])}"
+            verdict = f"evaluator error: {cell(x['error'])}"
         elif x:
             verdict = (f"**{ {'prime': 'PRIME', 'model': 'Model', 'tie': 'Tie'}[x['winner']] }**<br>"
                        f"model: {x['model']['label']} ({x['model']['helpfulness']})<br>"
