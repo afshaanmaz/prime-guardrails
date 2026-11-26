@@ -38,3 +38,4 @@ this file wins.
 | Q11 | Benchmark against other guardrails | Plan in `RELATED_WORK.md` (Llama Guard, ShieldGemma, WildGuard, Qwen3Guard, Model Armor, ...) |
 | Q12 | Personal-data redaction and prompt-injection detection on input | Model Armor-style. Not measurable on HarmBench or XSTest |
 | Q13 | Human ratings to validate the evaluator LLM | About 100 items. No standard benchmark scores refusal quality, so this could be a contribution |
+| Q19 | **Latency for a live app: replace the 7B risk sensor with a small trained guard (e.g. Qwen3Guard-Gen-0.6B) and stream or cap refusals?** | T4, `LATENCY.md`: R takes 3.45 s, the refusal 5.6 s; Qwen3Guard-0.6B takes 0.13 s. A short R output alone saves 2 s. Needs a quality comparison (guard as R vs the prompted 7B R) before it is adopted |
