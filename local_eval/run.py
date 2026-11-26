@@ -51,7 +51,7 @@ async def main(args):
 
     n = 0
     with open(out / "traces.jsonl", "w") as f:
-        for ds in cfg["run"]["datasets"]:
+        for ds in args.datasets or cfg["run"]["datasets"]:
             items = data.load(ds, limit)
             for cond in CONDITIONS:
                 t0 = time.time()
@@ -72,4 +72,5 @@ if __name__ == "__main__":
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--datasets", nargs="+", help="override run.datasets, e.g. --datasets harmbench")
     asyncio.run(main(ap.parse_args()))
