@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 import data
+from monitor import Monitor, request_context
 from prime_local import Chat, Policy, Prime, gather_limited
 
 CONDITIONS = ["none", "prime"]   # model alone vs model + PRIME
@@ -50,6 +51,7 @@ async def main(args):
         commit = ""
     meta = {"run_id": run_id, "mock": args.mock, "commit": commit, "config": cfg,
             "conditions": CONDITIONS, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+    monitor = Monitor.from_config(cfg, run_id, mock=args.mock)   # M: interaction records (MONITORING.md)
 
     n = 0
     with open(out / "traces.jsonl", "w") as f:
@@ -57,12 +59,15 @@ async def main(args):
             items = data.load(ds, int(sizes[ds]) if ds in sizes else limit)
             for cond in CONDITIONS:
                 t0 = time.time()
-                traces = await gather_limited([prime.run(it["prompt"], cond) for it in items],
+                ctxs = [request_context(run_id, it) for it in items]
+                traces = await gather_limited([prime.run(it["prompt"], cond, monitor, it) for it in ctxs],
                                               cfg["run"]["concurrency"])
-                for it, tr in zip(items, traces):
+                for it, tr in zip(ctxs, traces):
                     f.write(json.dumps({**it, **asdict(tr)}) + "\n")
                 n += len(items)
                 print(f"{ds:10s} {cond:13s} {len(items):4d} prompts  {time.time()-t0:6.1f}s")
+    if monitor:
+        monitor.close()
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     meta["traces"] = n
     json.dump(meta, open(out / "meta.json", "w"), indent=2)

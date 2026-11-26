@@ -254,8 +254,16 @@ class Prime:
         tr.action, tr.refusal_source, tr.fallback_reason = "REFUSE", "template", reason
         tr.final_output = REFUSAL_TEMPLATES.get(v.category or "", GENERIC_REFUSAL)
 
-    async def run(self, prompt: str, condition: str) -> Trace:
-        """condition: 'none' (model alone) | 'prime' (model + PRIME)"""
+    async def run(self, prompt: str, condition: str, monitor=None, context: dict | None = None) -> Trace:
+        """condition: 'none' (model alone) | 'prime' (model + PRIME). With a monitor (monitor.py),
+        the interaction is recorded when the request ends; context adds ids and dataset fields."""
+        started = time.time()
+        tr = await self._run(prompt, condition)
+        if monitor:
+            monitor.record_interaction(self, prompt, tr, context, started)
+        return tr
+
+    async def _run(self, prompt: str, condition: str) -> Trace:
         tr = Trace(condition=condition)
         t_start = time.perf_counter()
         to_model = prompt
