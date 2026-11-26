@@ -17,12 +17,11 @@ LOOSE mode, 0.7 / 0.3), with three changes:
    apply after the score (they can only make an action stricter), and `mode: STRICT`
    uses lower thresholds (0.5 / 0.15, my choice; there were no Strict values to copy).
 
-## Conditions
-- `none`: the generator answers directly (baseline).
-- `input`: PRIME judges the prompt; refuses (with a helpful reply), answers with a context note
-  (medium risk: original question kept, intent and risk passed to the model), or allows.
-  It never rewrites the user's question.
-- `input_output`: as above, then PRIME judges the response before it's shown.
+## Conditions (V1)
+- `none`: the protected model answers directly (baseline).
+- `prime`: PRIME's risk judge scores the request; the policy picks ALLOW (original request goes to the
+  model), REWRITE (the request is rewritten, and the model answers the rewrite) or REFUSE (PRIME writes a
+  contextual refusal, and the model isn't called). See `prime_local.py` and `DECISIONS.md`.
 
 ## Datasets
 - **HarmBench** (200 standard behaviors, all unsafe): does harmful content reach the user?
@@ -36,11 +35,12 @@ VM setup is in `infra/` (`setup-prime-lab.sh`, then `vm-steps.md`).
 cd local_eval
 python3 -m pip install -r requirements.txt
 ./serve.sh                      # generator on :8001, judge on :8002
-python3 run.py --limit 20       # smoke run first
-python3 run.py                  # full run, ~1,950 traces
-python3 grade.py results/<run_id>
+python3 run.py --sizes harmbench=10 xstest=30    # pilot
+python3 run.py --sizes harmbench=50 xstest=150   # V1 run
+python3 judge_ab.py results/<run_id>             # blind A/B judge (ab_judge in config.yaml)
+python3 report.py results/<run_id>               # REPORT.md + COMPARISON.md
 ```
-`python3 run.py --mock --limit 20` then `python3 grade.py results/<id>-mock --mock`
+`python3 run.py --mock --limit 20`, `python3 judge_ab.py results/<id>-mock --mock`, `python3 report.py results/<id>-mock`
 tests the plumbing without a GPU.
 
 Each run writes `results/<run_id>/`: `meta.json` (models, policy, commit),

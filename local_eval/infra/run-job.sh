@@ -3,6 +3,7 @@
 # Starts the VM if needed (recreating it elsewhere if its zone has no GPU), hands it the script via metadata (startup.sh's watcher runs it
 # within a minute), and prints its console progress until the job ends.
 # Usage: infra/run-job.sh infra/jobs/smoke.sh        (from local_eval/; needs infra/vm.env)
+#        infra/run-job.sh infra/jobs/v1.sh SIZES="harmbench=10 xstest=30"   (KEY=VALUE pairs are exported to the job)
 #        infra/run-job.sh --follow                   (just follow the current job's output)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,10 +27,10 @@ ensure_running() {
 }
 
 if [[ "${1:-}" != "--follow" ]]; then
-  job=${1:?usage: run-job.sh JOB_SCRIPT}
+  job=${1:?usage: run-job.sh JOB_SCRIPT [KEY=VALUE ...]}; shift
   ensure_running
   id="$(basename "$job" .sh)-$(date -u +%Y%m%d-%H%M%S)"
-  tmp=$(mktemp); { echo "export BUCKET=$BUCKET JOB_ID=$id"; cat "$job"; } > "$tmp"
+  tmp=$(mktemp); { echo "export BUCKET=$BUCKET JOB_ID=$id"; for kv in "$@"; do printf 'export %q\n' "$kv"; done; cat "$job"; } > "$tmp"
   gcloud compute instances add-metadata "$NAME" "${G[@]}" \
     --metadata-from-file prime-job="$tmp" --metadata prime-job-id="$id" >/dev/null
   rm -f "$tmp"

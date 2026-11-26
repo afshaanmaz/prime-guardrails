@@ -17,7 +17,16 @@ judge:                     # PRIME's risk judge (replaces Gemini 2.5 Flash Lite)
   temperature: 0.0
   serve: {gpu_memory: 0.48, max_model_len: 2048}
 
-grader:                    # independent scorer of final outputs; must not be PRIME's judge
+ab_judge:                  # E: blind A/B comparison of model-alone vs PRIME answers (judge_ab.py).
+                           # Must differ from PRIME's judge and the protected model. Any
+                           # OpenAI-compatible endpoint; api_key_cmd prints a key or token.
+  model: google/gemini-2.5-flash
+  base_url: https://aiplatform.googleapis.com/v1/projects/afshaan-trial-1/locations/global/endpoints/openapi
+  api_key_cmd: gcloud auth print-access-token
+  max_tokens: 600
+  concurrency: 8
+
+grader:                    # (unused in V1; superseded by ab_judge) independent scorer of final outputs
   model: OPEN_DECISION     # see README "Open decisions"
   base_url: http://localhost:8003/v1
   max_tokens: 10
@@ -28,8 +37,6 @@ policy:                    # same shape as Shubham's config.py, now fully enforc
     LOOSE:  {high: 0.7, medium: 0.3}    # Shubham's values
     STRICT: {high: 0.5, medium: 0.15}   # my choice; his code never defined Strict values
   fail_closed: true        # judge error -> treat as REFUSE, but it is counted separately
-  refusal_style: helpful   # helpful: short decline + safe alternative, safety-checked (falls back to fixed)
-                           # fixed:   always "I can't help with that request." (the original behaviour)
   topics:                  # his sensitive_topics (defined but never read in his code)
     Competitors:
       action: REFUSE

@@ -15,15 +15,23 @@ class MockClient:
         text = messages[0]["content"]
         if self.role == "generator":
             out = f"[mock answer to: {text[:40]}]"
+        elif self.role == "judge" and "Rewrite the request" in text:
+            out = "[mock rewritten request] " + text.split("<<<")[1].split(">>>")[0].strip()[:60]
         elif self.role == "judge" and "Write the reply the user will see" in text:
-            out = "I can't help with that, but here is a safe alternative. [mock helpful refusal]"
+            out = "I can't help with that, but here is a safe alternative. [mock contextual refusal]"
         elif self.role == "judge":
             if self.rng.random() < 0.05:
                 out = "not json"                      # exercise the judge-error path
             else:
                 s = round(self.rng.random(), 2)
-                out = json.dumps({"category": self.rng.choice(["Other", "Violence", "Mental Health", "Competitors"]), "score": s, "reason": "mock", "intent": "mock intent",
-                                  "safe_rewrite": "a safer version" if s >= 0.3 else ""})
+                out = json.dumps({"category": self.rng.choice(["Other", "Violence", "Mental Health", "Competitors"]), "score": s, "reason": "mock", "intent": "mock intent"})
+        elif self.role == "ab_judge":
+            labels = ["harmful", "safe_helpful", "refusal_with_alternative", "bare_refusal", "over_refusal", "off_target"]
+            side = lambda: {"safety": self.rng.choice(["safe", "harmful"]), "helpfulness": self.rng.randint(1, 5),
+                            "label": self.rng.choice(labels)}
+            out = "not json" if self.rng.random() < 0.03 else json.dumps(
+                {"a": side(), "b": side(), "winner": self.rng.choice(["A", "B", "tie"]),
+                 "failure_mode": self.rng.choice(["over_refusal", "harmful_content", "lost_intent", "none"]), "reason": "mock"})
         else:  # grader
             out = self.rng.choice(["yes", "no"])
         return NS(choices=[NS(message=NS(content=out))])

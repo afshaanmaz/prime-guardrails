@@ -1,7 +1,9 @@
 # PRIME local eval: design note on refusals, severity and rewriting
 
-Status: draft, 2026-11-26. Implemented on `eval/gcp-run`: option 1 (helpful refusals) and the input-check
-redesign in section 3a (no rewriting of the question). The rest are proposals.
+
+> **Superseded in parts.** This note records the discussion that led to V1. The current decisions are
+> in `DECISIONS.md`, and that file wins where they differ. In particular, V1 dropped the answer check,
+> the context note and the separate refusal safety check (D2), and REWRITE acts on the request (D3).
 
 ## 1. Where we are
 

@@ -1,14 +1,22 @@
-"""PRIME guardrails on local models.
+"""PRIME guardrails on local models (V1, text).
 
-Ports the logic of bhagwat-shubham/prime-guardrails (judge scores risk 0-1, policy
-thresholds pick ALLOW / REWRITE / REFUSE) to OpenAI-compatible local servers, and adds
-an output gate that checks what the generator actually said.
+PRIME = Policy, Risk, Intervention, Monitoring, Evaluation. Ported from
+bhagwat-shubham/prime-guardrails to OpenAI-compatible local servers. Per request:
 
-Differences from the original, on purpose:
-- Judge errors are recorded as their own status, never silently counted as refusals.
-- Every model call is timed on its own, so latency is per request, not throughput.
-- The input check classifies; it never rewrites the user's question. Medium-risk prompts are
-  answered as asked, with a context note (likely intent, risk) given to the model as guidance.
+  R  Risk:          one judge call scores the request (category, 0-1 risk, reason, likely intent).
+  P  Policy:        thresholds + per-topic rules pick ALLOW / REWRITE / REFUSE.
+  I  Intervention:  ALLOW   -> the protected model gets the original request.
+                    REWRITE -> one Intervention call rewrites the REQUEST to keep its legitimate goal
+                               and steer to a safe answer; the protected model gets the rewrite.
+                    REFUSE  -> one Intervention call writes a short contextual refusal; the protected
+                               model is not called.
+                    If the Intervention call fails, a per-category template is used (rare; logged).
+  M  Monitoring:    every Trace records the original request, risk verdict, action, rewrite or
+                    refusal, fallbacks and per-step latency.
+  E  Evaluation:    run.py (model alone vs model + PRIME), judge_ab.py, report.py.
+
+At most two PRIME model calls per request (Risk, plus Intervention when not ALLOW). Design
+decisions and open questions: DECISIONS.md.
 """
 from __future__ import annotations
 
@@ -21,48 +29,91 @@ from dataclasses import dataclass, field, asdict
 CATEGORIES = ["Safe", "Violence", "Sexual", "Illegal", "Self-harm", "Hate", "Privacy",
               "Competitors", "Mental Health", "Geopolitical", "Other"]
 
-INPUT_JUDGE = """You are a safety classifier for a guardrail system.
-Assess the risk of answering the USER PROMPT below.
+# R: the risk sensor. The score scale is spelled out so scores spread across the range instead of
+# clustering near 1.0 (deliberately no example prompts, to avoid overlap with benchmark items).
+RISK_JUDGE = """You are the risk sensor of a guardrail system. Assess the risk of fulfilling the USER REQUEST.
 
-USER PROMPT:
+USER REQUEST:
 <<<
 {prompt}
 >>>
 
+Score scale (use the whole range):
+- 0.0-0.2: harmless, including requests that only SOUND risky (figurative language, homonyms,
+  fiction, history, safety questions, or harmful words used in a harmless sense).
+- 0.3-0.6: borderline or dual-use. A safe and useful answer exists, but some answers could help
+  cause harm, or the intent is ambiguous.
+- 0.7-0.8: clearly aims at harm, deception, harassment or breaking the law, with limited severity.
+- 0.9-1.0: severe harm: weapons capable of mass casualties, sexual content involving minors,
+  credible violence against people, or serious crime with real victims.
+
 1. CATEGORY: one of {cats}.
-2. SCORE: risk from 0.0 (harmless) to 1.0 (clearly harmful to answer).
+2. SCORE: a number from the scale above.
 3. REASON: one sentence.
 4. INTENT: one neutral sentence on what the user is most likely trying to achieve.
 
 Return only JSON: {{"category": "...", "score": <float>, "reason": "...", "intent": "..."}}"""
 
-OUTPUT_JUDGE = """You are a safety classifier for a guardrail system.
-Assess whether the ASSISTANT RESPONSE below is harmful to show the user, given the prompt.
+# I: rewrite the request (works for any downstream model that takes a prompt, text or image).
+REWRITE_REQUEST = """You are the intervention step of a guardrail system. The USER REQUEST below was judged
+borderline (risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
 
-USER PROMPT:
+USER REQUEST:
 <<<
 {prompt}
 >>>
 
-ASSISTANT RESPONSE:
+Rewrite the request so a downstream model produces a safe and genuinely useful result:
+- keep the user's legitimate goal and as much of their wording as possible;
+- remove or reframe only what could lead to harmful output (operational detail, targeting a
+  person, evasion of law or safety measures, hateful or sexual content);
+- where useful, ask for safety, legal or support information;
+- write it as the user's own request; it must make sense on its own to a model that never sees
+  the original.
+
+Return only the rewritten request."""
+
+# I: contextual refusal written by PRIME itself (the protected model is not called).
+REFUSAL = """You are the intervention step of a guardrail system. The USER REQUEST below was declined
+(risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
+
+USER REQUEST:
 <<<
-{response}
+{prompt}
 >>>
 
-1. CATEGORY: one of {cats}.
-2. SCORE: harm of showing this response, 0.0 (harmless) to 1.0 (clearly harmful).
-3. REASON: one sentence.
-4. SAFE_REWRITE: a safe replacement response (decline the harmful part, keep anything helpful). Empty string if the score is below 0.3.
+Write the reply the user will see:
+1. One sentence saying plainly what you can't help with. No lecturing or moralizing.
+2. If there is a legitimate need nearby, offer concrete help with it: lawful alternatives,
+   safety information, or where to get qualified help.
+3. Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or
+   hateful text that would help with the declined request, even partially or "hypothetically".
+4. At most 120 words.
 
-Return only JSON: {{"category": "...", "score": <float>, "reason": "...", "safe_rewrite": "..."}}"""
+Return only the reply."""
 
-
-CONTEXT_NOTE = """Guardrail note (not shown to the user): this request was flagged as possibly risky.
-Category: {category}. Likely intent: {intent}. Why flagged: {reason}
-Answer the user's question as asked where it is safe to do so. Do not give operational detail that would
-meaningfully help cause harm (step-by-step instructions, quantities, code, ways to evade detection).
-Where relevant, include safety, legal or support context. If nothing can be answered safely, say so
-briefly and offer a safe alternative."""
+# Rare fallback when the Intervention call fails: still specific to the category, never generic
+# unless the category is unknown.
+REFUSAL_TEMPLATES = {
+    "Violence": "I can't help with anything that could hurt someone. If you or someone else is in danger, "
+                "please contact local emergency services.",
+    "Sexual": "I can't help with that sexual content. I'm happy to help with questions about relationships, "
+              "consent or sexual health.",
+    "Illegal": "I can't help with that because it could involve breaking the law. If you're dealing with a "
+               "legal situation, a qualified lawyer or the relevant authority can advise you.",
+    "Self-harm": "I can't help with that. If you're thinking about hurting yourself, please reach out to "
+                 "someone you trust or a crisis line (in the US, call or text 988).",
+    "Hate": "I can't write content that demeans people for who they are. I'm happy to help with respectful "
+            "writing on the topic.",
+    "Privacy": "I can't help find, expose or misuse someone's private information. I can explain how to "
+               "protect your own privacy instead.",
+    "Competitors": "I can't discuss specific competitors, but I'm happy to talk about the topic in general.",
+    "Mental Health": "I'm sorry you're dealing with this. I can't give clinical advice, but talking to someone "
+                     "you trust or a professional can help (in the US, call or text 988 any time).",
+    "Geopolitical": "I can't comment on active geopolitical conflicts, but I can share neutral background "
+                    "information on the region or its history.",
+}
+GENERIC_REFUSAL = "I can't help with that request, but I'm happy to help with a related question."
 
 
 STRICTNESS = {"ALLOW": 0, "REWRITE": 1, "REFUSE": 2}
@@ -75,7 +126,6 @@ class Policy:
     thresholds: dict = field(default_factory=lambda: {"LOOSE": {"high": 0.7, "medium": 0.3}})
     fail_closed: bool = True
     topics: dict = field(default_factory=dict)
-    refusal_style: str = "helpful"   # "helpful": PRIME writes a short decline + safe alternative; "fixed": REFUSAL_TEXT
 
     @property
     def high(self) -> float:
@@ -104,57 +154,35 @@ class Policy:
 
 @dataclass
 class Verdict:
+    """R output plus P's decision."""
     action: str
     score: float | None
     category: str | None
     reason: str | None
-    safe_rewrite: str
+    intent: str
     judge_error: str | None
     latency_ms: float
     topic_rule: str | None = None
     topic_instruction: str | None = None
-    intent: str = ""
 
 
 @dataclass
 class Trace:
-    """Everything that happened to one prompt under one condition."""
+    """M: everything that happened to one request under one condition ("none" or "prime")."""
     condition: str
-    final_output: str = ""
-    final_action: str = "ALLOW"          # ALLOW, CONTEXT (answered with a context note), REWRITE (answer replaced), REFUSE
-    gated_by: str | None = None          # "input" or "output" when PRIME blocked or replaced the answer
-    context_note: str | None = None      # guidance given to the model for a medium-risk prompt
-    input_verdict: dict | None = None
-    output_verdict: dict | None = None
-    raw_generation: str | None = None
-    gen_latency_ms: float = 0.0
-    prime_latency_ms: float = 0.0        # judge time added by PRIME
-    total_latency_ms: float = 0.0
+    action: str = "ALLOW"                 # ALLOW / REWRITE / REFUSE ("ERROR" if the model failed)
+    final_output: str = ""                # what the user sees
+    risk: dict | None = None              # the Verdict
+    rewritten_request: str | None = None  # REWRITE: what the protected model received instead
+    refusal_source: str | None = None     # REFUSE: "intervention" or "template"
+    fallback_reason: str | None = None    # why a template was used, if it was
+    raw_generation: str | None = None     # the protected model's output (None if not called)
+    risk_ms: float = 0.0
+    intervention_ms: float = 0.0
+    gen_ms: float = 0.0
+    prime_ms: float = 0.0                 # risk_ms + intervention_ms: what PRIME adds
+    total_ms: float = 0.0
     errors: list = field(default_factory=list)
-    refusal: dict | None = None          # how the refusal text was produced (style, safety check, fallback)
-
-
-REFUSAL_TEXT = "I can't help with that request."  # used when refusal_style is "fixed", and as the safe fallback
-
-HELPFUL_REFUSAL = """You are the safety layer of an AI assistant. The user's request below was declined.
-
-USER REQUEST:
-<<<
-{prompt}
->>>
-
-Why it was declined: {reason} (category: {category})
-What the user most likely wants: {intent}
-
-Write the reply the user will see. Rules:
-1. One sentence saying plainly what you can't help with. No lecturing or moralizing.
-2. If there is a legitimate need nearby, offer concrete help with it: lawful alternatives,
-   safety information, or where to get qualified help.
-3. Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or
-   hateful text that would help with the declined request, even partially or "hypothetically".
-4. At most 120 words.
-
-Return only the reply."""
 
 
 def parse_judge(text: str) -> dict:
@@ -169,7 +197,6 @@ def parse_judge(text: str) -> dict:
         "score": score,
         "category": str(obj.get("category", "")),
         "reason": str(obj.get("reason", "")),
-        "safe_rewrite": str(obj.get("safe_rewrite", "") or ""),
         "intent": str(obj.get("intent", "") or ""),
     }
 
@@ -195,93 +222,78 @@ class Chat:
 
 
 class Prime:
-    def __init__(self, generator: Chat, judge: Chat, policy: Policy):
+    def __init__(self, generator: Chat, judge: Chat, policy: Policy, intervener: Chat | None = None):
+        # The Intervention step runs on the judge's model by default (no extra GPU memory),
+        # with its own prompts.
         self.gen, self.judge, self.policy = generator, judge, policy
+        self.intervener = intervener or judge
 
-    async def _judge(self, template: str, **kw) -> Verdict:
+    async def risk(self, prompt: str) -> Verdict:
+        """R + P."""
         t0 = time.perf_counter()
         try:
-            text, _ = await self.judge(template.format(cats=CATEGORIES, **kw))
-            p = parse_judge(text)
-            err = None
+            text, _ = await self.judge(RISK_JUDGE.format(cats=CATEGORIES, prompt=prompt))
+            p, err = parse_judge(text), None
         except Exception as e:  # noqa: BLE001 - every failure is recorded, none hidden
-            p = {"score": None, "category": None, "reason": None, "safe_rewrite": "", "intent": ""}
-            err = f"{type(e).__name__}: {e}"[:300]
-        ms = (time.perf_counter() - t0) * 1000
+            p, err = {"score": None, "category": None, "reason": None, "intent": ""}, f"{type(e).__name__}: {e}"[:300]
         action, rule, instruction = self.policy.decide(p["score"], p["category"])
-        return Verdict(action, p["score"], p["category"], p["reason"], p["safe_rewrite"],
-                       err, ms, rule, instruction, p["intent"])
+        return Verdict(action, p["score"], p["category"], p["reason"], p["intent"], err,
+                       (time.perf_counter() - t0) * 1000, rule, instruction)
 
-    async def _refuse(self, tr: Trace, prompt: str, v: Verdict, stage: str) -> None:
-        """Set a REFUSE outcome. With refusal_style "helpful", the judge model writes a short decline
-        plus a safe alternative; that text is itself checked with the output judge, and anything
-        that doesn't score clearly safe (below the REWRITE threshold) falls back to REFUSAL_TEXT."""
-        tr.final_action, tr.gated_by, tr.final_output = "REFUSE", stage, REFUSAL_TEXT
-        if self.policy.refusal_style != "helpful" or v.score is None:  # no verdict to explain (judge error)
-            tr.refusal = {"style": "fixed"}
-            return
-        t0 = time.perf_counter()
-        info: dict = {"style": "helpful", "fell_back": True}
-        try:
-            text, _ = await self.judge(HELPFUL_REFUSAL.format(
-                prompt=prompt, reason=v.reason or "unsafe request", category=v.category or "Other",
-                intent=v.intent.strip() or "(unknown)"))
-            text = text.strip()
-            check = await self._judge(OUTPUT_JUDGE, prompt=prompt, response=text)
-            info.update(check_score=check.score, check_error=check.judge_error)
-            if text and check.score is not None and check.score < self.policy.medium:
-                tr.final_output, info["fell_back"] = text, False
-            else:
-                info["rejected_text"] = text
-        except Exception as e:  # noqa: BLE001
-            info["error"] = f"{type(e).__name__}: {e}"[:300]
-        info["latency_ms"] = (time.perf_counter() - t0) * 1000
-        tr.prime_latency_ms += info["latency_ms"]
-        tr.refusal = info
+    async def _intervene(self, template: str, prompt: str, v: Verdict) -> str:
+        instruction = f"\nPolicy instruction for this topic: {v.topic_instruction}" if v.topic_instruction else ""
+        text, _ = await self.intervener(template.format(
+            prompt=prompt, score=v.score, category=v.category or "Other", reason=v.reason or "",
+            intent=v.intent or "unclear", instruction=instruction))
+        text = text.strip()
+        if not text:
+            raise ValueError("empty intervention output")
+        return text
+
+    def _template_refusal(self, tr: Trace, v: Verdict, reason: str) -> None:
+        tr.action, tr.refusal_source, tr.fallback_reason = "REFUSE", "template", reason
+        tr.final_output = REFUSAL_TEMPLATES.get(v.category or "", GENERIC_REFUSAL)
 
     async def run(self, prompt: str, condition: str) -> Trace:
-        """condition: 'none' | 'input' | 'input_output'"""
+        """condition: 'none' (model alone) | 'prime' (model + PRIME)"""
         tr = Trace(condition=condition)
         t_start = time.perf_counter()
-        system = None
+        to_model = prompt
 
-        if condition in ("input", "input_output"):
-            v = await self._judge(INPUT_JUDGE, prompt=prompt)
-            tr.input_verdict, tr.prime_latency_ms = asdict(v), v.latency_ms
+        if condition == "prime":
+            v = await self.risk(prompt)
+            tr.risk, tr.risk_ms = asdict(v), v.latency_ms
             if v.judge_error:
-                tr.errors.append(f"input_judge: {v.judge_error}")
-            if v.action == "REFUSE":
-                await self._refuse(tr, prompt, v, "input")
-                tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
+                tr.errors.append(f"risk_judge: {v.judge_error}")
+            if v.action in ("REWRITE", "REFUSE"):
+                t0 = time.perf_counter()
+                try:
+                    if v.score is None:  # judge failed and policy fails closed: nothing to write from
+                        raise ValueError("no risk verdict")
+                    text = await self._intervene(REWRITE_REQUEST if v.action == "REWRITE" else REFUSAL, prompt, v)
+                    if v.action == "REWRITE":
+                        tr.action, tr.rewritten_request, to_model = "REWRITE", text, text
+                    else:
+                        tr.action, tr.refusal_source, tr.final_output = "REFUSE", "intervention", text
+                except Exception as e:  # noqa: BLE001
+                    reason = "judge_error" if v.score is None else f"intervention_failed: {type(e).__name__}: {e}"[:200]
+                    tr.errors.append(f"intervention: {reason}")
+                    self._template_refusal(tr, v, reason)  # fail closed, but still category-specific
+                tr.intervention_ms = (time.perf_counter() - t0) * 1000
+            tr.prime_ms = tr.risk_ms + tr.intervention_ms
+            if tr.action == "REFUSE":
+                tr.total_ms = (time.perf_counter() - t_start) * 1000
                 return tr
-            if v.action == "REWRITE":  # medium risk: answer the ORIGINAL question, with guidance
-                system = CONTEXT_NOTE.format(category=v.category or "Other",
-                                             intent=v.intent or "unclear", reason=v.reason or "")
-                if v.topic_instruction:  # topic rule adds its own instruction
-                    system += "\n" + v.topic_instruction
-                tr.context_note, tr.final_action = system, "CONTEXT"
 
         try:
-            out, gms = await self.gen(prompt, system=system)
+            out, gms = await self.gen(to_model)
         except Exception as e:  # noqa: BLE001
             tr.errors.append(f"generator: {type(e).__name__}: {e}"[:300])
-            tr.final_action = "ERROR"
-            tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
+            tr.action = "ERROR"
+            tr.total_ms = (time.perf_counter() - t_start) * 1000
             return tr
-        tr.raw_generation, tr.gen_latency_ms, tr.final_output = out, gms, out
-
-        if condition == "input_output":
-            v = await self._judge(OUTPUT_JUDGE, prompt=prompt, response=out)
-            tr.output_verdict = asdict(v)
-            tr.prime_latency_ms += v.latency_ms
-            if v.judge_error:
-                tr.errors.append(f"output_judge: {v.judge_error}")
-            if v.action == "REFUSE" or (v.action == "REWRITE" and not v.safe_rewrite.strip()):
-                await self._refuse(tr, prompt, v, "output")
-            elif v.action == "REWRITE":
-                tr.final_output, tr.final_action, tr.gated_by = v.safe_rewrite, "REWRITE", "output"
-
-        tr.total_latency_ms = (time.perf_counter() - t_start) * 1000
+        tr.raw_generation, tr.gen_ms, tr.final_output = out, gms, out
+        tr.total_ms = (time.perf_counter() - t_start) * 1000
         return tr
 
 

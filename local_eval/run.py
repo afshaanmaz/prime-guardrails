@@ -1,7 +1,8 @@
 """Run PRIME conditions over the benchmarks and save every trace.
 
-  python run.py                 # real run against the vLLM servers in config.yaml
-  python run.py --mock --limit 20   # plumbing test, no GPU
+  python run.py                                   # real run against the vLLM servers in config.yaml
+  python run.py --sizes harmbench=50 xstest=150   # per-dataset sample sizes (spread across categories)
+  python run.py --mock --limit 20                 # plumbing test, no GPU
 Writes results/<run_id>/traces.jsonl and meta.json.
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ import yaml
 import data
 from prime_local import Chat, Policy, Prime, gather_limited
 
-CONDITIONS = ["none", "input", "input_output"]
+CONDITIONS = ["none", "prime"]   # model alone vs model + PRIME
 
 
 def make_client(section: dict, role: str, mock: bool):
@@ -39,6 +40,7 @@ async def main(args):
         Policy(**cfg["policy"]),
     )
     limit = args.limit or cfg["run"]["limit"]
+    sizes = dict(kv.split("=") for kv in (args.sizes or []))
     run_id = time.strftime("%Y%m%d-%H%M%S") + ("-mock" if args.mock else "")
     out = Path("results") / run_id
     out.mkdir(parents=True)
@@ -51,8 +53,8 @@ async def main(args):
 
     n = 0
     with open(out / "traces.jsonl", "w") as f:
-        for ds in args.datasets or cfg["run"]["datasets"]:
-            items = data.load(ds, limit)
+        for ds in list(sizes) or args.datasets or cfg["run"]["datasets"]:
+            items = data.load(ds, int(sizes[ds]) if ds in sizes else limit)
             for cond in CONDITIONS:
                 t0 = time.time()
                 traces = await gather_limited([prime.run(it["prompt"], cond) for it in items],
@@ -64,7 +66,7 @@ async def main(args):
     meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     meta["traces"] = n
     json.dump(meta, open(out / "meta.json", "w"), indent=2)
-    print(f"\nSaved {n} traces to {out}. Next: python grade.py {out}")
+    print(f"\nSaved {n} traces to {out}. Next: python judge_ab.py {out} && python report.py {out}")
 
 
 if __name__ == "__main__":
@@ -73,4 +75,5 @@ if __name__ == "__main__":
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--datasets", nargs="+", help="override run.datasets, e.g. --datasets harmbench")
+    ap.add_argument("--sizes", nargs="+", metavar="DATASET=N", help="per-dataset sizes; implies --datasets")
     asyncio.run(main(ap.parse_args()))
