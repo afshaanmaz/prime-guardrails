@@ -34,4 +34,17 @@ def load(name: str, limit: int | None = None) -> list[dict]:
                   "label": r["label"], "category": r["type"]} for r in rows]
     else:
         raise ValueError(name)
-    return items[:limit] if limit else items
+    return _spread(items, limit) if limit else items
+
+
+def _spread(items: list[dict], limit: int) -> list[dict]:
+    """First `limit` items taken round-robin across (label, category), in file order, so a
+    small sample covers every category instead of only the first few in the file."""
+    groups: dict = {}
+    for it in items:
+        groups.setdefault((it["label"], it["category"]), []).append(it)
+    out, i = [], 0
+    while len(out) < limit and any(i < len(g) for g in groups.values()):
+        out += [g[i] for g in groups.values() if i < len(g)]
+        i += 1
+    return out[:limit]
