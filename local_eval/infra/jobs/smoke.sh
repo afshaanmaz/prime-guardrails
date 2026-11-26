@@ -10,7 +10,7 @@ nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
 mkdir -p /opt && cd /opt
 [[ -d prime-guardrails ]] || git clone -q https://github.com/afshaanmaz/prime-guardrails.git
-cd prime-guardrails && git fetch -q origin "$BRANCH" && git checkout -q -B "$BRANCH" FETCH_HEAD
+cd prime-guardrails && git fetch -q origin "$BRANCH" && git checkout -q -f -B "$BRANCH" FETCH_HEAD  # -f: earlier runs leave result files that are now tracked
 echo "code at $(git rev-parse --short HEAD)"
 cd local_eval
 
