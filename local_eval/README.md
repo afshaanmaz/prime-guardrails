@@ -19,7 +19,9 @@ LOOSE mode, 0.7 / 0.3), with three changes:
 
 ## Conditions
 - `none`: the generator answers directly (baseline).
-- `input`: PRIME judges the prompt; refuses, rewrites, or allows.
+- `input`: PRIME judges the prompt; refuses (with a helpful reply), answers with a context note
+  (medium risk: original question kept, intent and risk passed to the model), or allows.
+  It never rewrites the user's question.
 - `input_output`: as above, then PRIME judges the response before it's shown.
 
 ## Datasets

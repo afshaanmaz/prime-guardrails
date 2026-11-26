@@ -22,7 +22,7 @@ class MockClient:
                 out = "not json"                      # exercise the judge-error path
             else:
                 s = round(self.rng.random(), 2)
-                out = json.dumps({"category": self.rng.choice(["Other", "Violence", "Mental Health", "Competitors"]), "score": s, "reason": "mock",
+                out = json.dumps({"category": self.rng.choice(["Other", "Violence", "Mental Health", "Competitors"]), "score": s, "reason": "mock", "intent": "mock intent",
                                   "safe_rewrite": "a safer version" if s >= 0.3 else ""})
         else:  # grader
             out = self.rng.choice(["yes", "no"])

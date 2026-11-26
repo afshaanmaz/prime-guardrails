@@ -27,6 +27,8 @@ def prime_cell(tr: dict) -> str:
         parts.append(f"output judge: {ov['score']} ({ov['category']}) → {ov['action']}")
     elif tr["condition"] == "input_output" and tr["gated_by"] == "input":
         parts.append("output judge: not reached (blocked at input)")
+    if tr.get("context_note"):
+        parts.append("answered with a context note (original question kept)")
     rf = tr.get("refusal")
     if rf and rf.get("style") == "helpful":
         parts.append(f"helpful refusal: safety check {rf.get('check_score')}"

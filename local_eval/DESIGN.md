@@ -1,6 +1,7 @@
 # PRIME local eval: design note on refusals, severity and rewriting
 
-Status: draft, 2026-11-26. Option 1 is implemented on `eval/gcp-run`. The rest are proposals.
+Status: draft, 2026-11-26. Implemented on `eval/gcp-run`: option 1 (helpful refusals) and the input-check
+redesign in section 3a (no rewriting of the question). The rest are proposals.
 
 ## 1. Where we are
 
@@ -22,11 +23,48 @@ prompts through Zephyr-7B (the protected model) with Qwen2.5-7B as PRIME's judge
 |---|---|---|
 | P1 | Refusals are unhelpful: one fixed sentence, whatever the request | Every one of the 20 blocked answers is identical |
 | P2 | Every unsafe request gets the same treatment | "Fool a breathalyzer" and "bio-weapon agents" both scored ≥ 0.8 → same flat refusal |
-| P3 | Rewriting is shallow, and the answer check is untested | See §3, option 3 |
+| P3 | PRIME rewrote the user's *question*, and the answer check is untested | See §3a and option 3 |
 | P4 | We only measure harm, so a guardrail that refuses everything looks perfect | Run scored 20/20 "blocked" with no view of usefulness |
 | P5 | Judge scores are saturated, so thresholds barely matter | All 20 scores between 0.8 and 1.0 |
 
 ## 3. Options and recommendations
+
+### 3a. The input check classifies; it does not rewrite. Implemented
+**Decision:** drop rewriting of the user's question. The input check now does only what input checks are
+good at, which is classifying and, for the worst cases, blocking. Medium-risk prompts are answered **as asked**, with
+a guardrail note to the model.
+
+**Why rewriting the question was dropped:**
+- It answers a question the user didn't ask, and hides that PRIME intervened.
+- It throws away the signal we most want, the user's actual intent. The model never sees it, so it can't
+  acknowledge or push back on it.
+- It is circular: the judge flags a risky question, writes a "safe" one, and nothing checks that question
+  or the answer to it.
+- It confounds evaluation: a good answer can't be credited to the model or to the rewrite.
+
+**How production guardrails treat input:** Google Cloud Model Armor's prompt-side checks *block or flag*
+(responsible-AI content filters, prompt injection and jailbreak detection, child sexual abuse material).
+The only check that changes the prompt is Sensitive Data Protection, which redacts personal and
+confidential data (and in some integrations blocks instead). That change serves privacy, not harm. None of
+them rewrites the question to make it "safe".
+
+**New input flow** (`Prime.run` in `prime_local.py`):
+
+| Input judge says | What happens | Trace `final_action` |
+|---|---|---|
+| Low risk (score < 0.3) | Model answers normally | `ALLOW` |
+| Medium risk (0.3–0.7) | Model gets the **original question** plus a system note: category, likely intent, why flagged, and "no operational detail; add safety, legal or support context" | `CONTEXT` |
+| High risk (≥ 0.7) | Refuse before the model answers (option 1 helpful refusal; option 2 would add a hard-decline tier) | `REFUSE` |
+
+- The input judge now returns `intent` (one neutral sentence) instead of a rewritten question. It feeds
+  both the context note and the helpful refusal.
+- Topic rules with an instruction (e.g. Mental Health) are appended to the context note.
+- `grade.py` reports `context_noted` separately from blocking, so answered-with-guidance isn't counted as
+  a catch.
+
+**Future input-side work (out of scope for this eval):** personal-data redaction (no personal data in
+HarmBench or XSTest to measure), and prompt-injection detection (matters once PRIME guards agents or
+tools).
 
 ### Option 1: helpful refusals (fixes P1). Implemented
 When PRIME refuses, the judge model writes the reply instead of using the fixed sentence. The reply:
@@ -70,8 +108,7 @@ that should simply be answered rather than refused.
 
 ### Option 3: rewrite the answer, not just the question (fixes P3). Proposed
 **What the current code does** (easy to miss, because none of it ran in our batch):
-- **Input check, REWRITE (score 0.3–0.7):** PRIME rewrites the *question* (the judge's `safe_rewrite`)
-  and sends that to the model. The user's actual question is never answered as asked.
+- **Input check, medium risk:** previously rewrote the *question*. Replaced by the context note (§3a).
 - **Output check (condition `input_output`):** it exists, but only sees answers the input check let
   through. In our run that was none, so it is untested.
 - **Output check, REWRITE:** the user gets the judge's `safe_rewrite` *of the answer* verbatim, and **that
@@ -108,7 +145,13 @@ prerequisite for option 2's tiers and for the thresholds to mean anything.
 
 Each step is a small code change plus about 10–20 minutes on the T4 Spot VM (about $0.10–0.20).
 
-## 5. Risks and open questions
+## 5. Benchmarking against other guardrails
+PRIME's results only mean something next to existing guardrails and specialized safety models (e.g.
+ShieldGemma, Llama Guard, Model Armor) on shared benchmarks. A literature and benchmark review is in
+progress in `RELATED_WORK.md`. The benchmark plan will be added here once it's done. One idea already: Model
+Armor runs in Google Cloud, so it can be run on the same prompts in this project as a commercial baseline.
+
+## 6. Risks and open questions
 - **Helpful refusals can leak.** Mitigated by the safety check and fallback. To verify, spot-check by hand
   plus the option 4 "harmful" bucket.
 - **PRIME's judge also writes the reply.** That's simpler, but the judge is checking its own text.
