@@ -18,7 +18,8 @@ command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh >/de
 [[ -d .venv ]] || uv venv -q --python 3.11 .venv
 . .venv/bin/activate
 # vLLM 0.9.x still runs on T4 (Turing) via its fallback engine; newer releases target newer GPUs.
-uv pip install -q "vllm==0.9.2" "openai>=1.40" "pyyaml>=6"
+# transformers>=4.54 registers "aimv2", which vLLM 0.9.2 also registers -> import error; pin below it.
+uv pip install -q "vllm==0.9.2" "transformers>=4.53,<4.54" "openai>=1.40" "pyyaml>=6"
 echo "vllm $(python -c 'import vllm; print(vllm.__version__)')"
 
 ./serve.sh stop >/dev/null; ./serve.sh
