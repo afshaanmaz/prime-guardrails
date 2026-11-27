@@ -22,9 +22,10 @@ paper's results.
 | 7 | **Offline policy re-application** (LOOSE / STRICT / topic rules) on logged scores; **decision re-derivation check** | Configurability and auditability claims, no GPU | Not started |
 | 8 | **Latency summary** for the paper from the latency benchmark plus per-request timings | Characterize, not claim, latency | Data exists |
 
-**Protected models: open-weight only, several providers** (decided 8:35 pm, from the side-chat discussion; D17)
-Gemini is dropped: its platform filters can't be fully turned off without an exception from Google, and
-they confound results (the August paper saw 73-89% suppression, varying between runs). Open-weight models
+**Protected models: open-weight only, several providers** (proposed 8:35 pm from the side-chat discussion; verified with corrections 8:45 pm; D17)
+Gemini is dropped: its configurable filters can be set to OFF on Vertex, but
+non-configurable ones remain, so results would mix trained safety with platform filtering. (The August paper's 73-89%
+"suppression" counted every empty response as a platform block, so it's an upper bound, not clean evidence.) Open-weight models
 served with vLLM have no provider filters, so the only safety is what's trained into the weights, which
 is exactly what we want to measure.
 
@@ -32,12 +33,12 @@ is exactly what we want to measure.
 |---|---|---|---|---|
 | Mistral-based | Zephyr-7B-beta (AWQ), weak safety tuning | No | Yes | In use |
 | Microsoft | Phi-3.5-mini-instruct (3.8B) | No | Yes (fp16) | Proposed for today |
-| IBM | Granite 3.3 8B Instruct | No | With 4-bit quantization (to verify on the VM) | Proposed for today |
-| Google | Gemma 2/3 (e.g. 9B, 4-bit) | **Yes (needs HF token)** | Yes | After the token is set up |
+| IBM | Granite 3.3 8B Instruct | No | Only in 4-bit (16 GB in fp16 doesn't fit); untested with our vLLM 0.9.2 | Try today; drop if 4-bit fails |
+| Google | Gemma 2/3 (e.g. 9B, 4-bit) | **Yes (needs HF token)** | **Risky:** Gemma 3 overflows in fp16 and the T4 has no bf16; needs an L4 (or a test) | After the token is set up and an L4 is available |
 | Meta | Llama 3.x 8B | **Yes (needs HF token)** | Yes | Risk sensor only, or score with a second evaluator (the Maverick evaluator is also Llama) |
-| OpenAI | gpt-oss-20b | No | Probably needs an L4 and a newer vLLM | Later |
+| OpenAI | gpt-oss-20b | No | Needs vLLM >= 0.10.1 (we pin 0.9.2 for the T4); tested hardware is Hopper/Blackwell | Out of scope on this setup |
 
-**Roles (D18):**
+**Roles (D18, proposed):**
 - **Protected model:** rotate across 3-4 families. That's the main axis, and the basis for the generality claim.
 - **Evaluator:** one fixed evaluator (Llama 4 Maverick) for all main results. Check it by re-scoring about 100 pairs with a second evaluator from another family, reporting agreement and any bias toward its own family.
 - **Risk sensor:** fixed for the main results (Qwen2.5-7B). Rotating it is an ablation: a protected model × risk sensor grid (e.g. 3 × 2) shown as a heat map. Cheap, because PRIME's decisions depend only on the request and the risk sensor.
@@ -47,8 +48,10 @@ is exactly what we want to measure.
 1. Create a **read-only, fine-grained** token on Hugging Face. Never paste it in chat.
 2. In Cloud Shell: `printf %s "<token>" | gcloud secrets create hf-token --data-file=- --project afshaan-trial-1`.
 3. Accept each gated model's license on Hugging Face (Meta's approval can take time, or be refused).
-4. Then, from the main thread: give the VM's service account read access to that one secret, and the VM
-   permission to call Secret Manager (a settings change while the VM is stopped). Jobs fetch the token at runtime.
+4. Then, from the main thread: create a **dedicated service account** for the VM with only bucket write and
+   read access to that one secret, and switch the VM to it (a settings change while it's stopped). Reason: the
+   VM currently uses the default compute account, which has broad Editor rights, and Secret Manager needs the
+   broad `cloud-platform` access scope, so without a dedicated account the VM would gain far more access than it needs.
 
 **Not blocking (backlog, in `DECISIONS.md`):** Pattern 2 / trained guard as R (Q21), streaming and
 TTFT/TTLT metrics, protected-model-written refusals (Q6), industry policies (Q20), NeMo head-to-head,
@@ -105,5 +108,6 @@ our own authored tuning set, full OR-Bench, human ratings (Q13).
 
 ### Thu 26 Nov, 8:35 pm: protected models and roles (decision, from the side-chat discussion)
 - **Problem:** Running only Zephyr can't support a generality claim, and Gemini's platform filters would confound results.
-- **Decision:** Open-weight protected models from several providers (D17), with fixed evaluator and risk sensor for main results, and rotation as ablations (D18). The HF token goes in Secret Manager for the gated models.
-- **Next:** Zephyr + Phi-3.5-mini + Granite 3.3 8B today (all ungated); Gemma once the token is set up.
+- **Proposal (verified 8:45 pm, with corrections):** Open-weight protected models from several providers (D17), with fixed evaluator and risk sensor for main results, and rotation as ablations (D18). The HF token goes in Secret Manager for the gated models.
+- **Corrections:** Gemini's filters can be set to OFF, but non-configurable ones remain. The August suppression figure counted all empty responses, so it's an upper bound. Gemma is unreliable on a T4. Granite 8B only fits in 4-bit (untested). gpt-oss needs a newer vLLM than we can run on a T4. The VM needs a dedicated service account before it can read the secret.
+- **Next:** Zephyr + Phi-3.5-mini today, plus Granite 3.3 8B if 4-bit works. Gemma needs the token and an L4.
