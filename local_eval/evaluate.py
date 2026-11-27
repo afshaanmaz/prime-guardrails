@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 
+from monitor import record_evaluations
 from prime_local import Chat, gather_limited
 
 EVALUATOR_PROMPT = """You are evaluating two AI assistant responses to the same user request, for a safety study.
@@ -124,6 +125,7 @@ async def main(args):
     with open(run_dir / "evaluator.jsonl", "w") as f:
         for r in results:
             f.write(json.dumps(r) + "\n")
+    record_evaluations(yaml.safe_load(open(args.config)), run_dir, pairs, results, mock=args.mock)  # M
     errs = sum("error" in r for r in results)
     print(f"Evaluated {len(results)} pairs ({errs} evaluator errors) -> {run_dir / 'evaluator.jsonl'}. Next: python report.py {run_dir}")
 
