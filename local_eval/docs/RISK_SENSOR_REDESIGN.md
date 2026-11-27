@@ -25,7 +25,7 @@ The redesign, as discussed so far:
 4. **The policy becomes specific:** each category says what is unsafe, what is borderline, and what is safe
    even though it sounds related. The LLM sensor reads these definitions from the policy.
 
-Still open: whether to keep Strict/Loose (section 6.1), the exact LLM prompt (6.2), where the intervention
+Settled since the first draft: what REFUSE and REWRITE mean, the Strict/Loose tables and a single definition of harm (5.8, 5.9). Still open: the exact LLM prompt (6.2), where the intervention
 step gets intent (6.3), and how to frame the deviation from the public page (6.4).
 
 ---
@@ -276,11 +276,95 @@ policy:
   probability-based sensors.
 - Decisions remain a deterministic function of (logged signal, policy), so they can be recomputed offline.
 
+### 5.8 What the actions mean (agreed 26 Nov, 9:54 pm PST)
+
+**Today the two actions blur.** Both redirect the user. REFUSE skips the protected model but still runs an LLM
+call that writes a warm 50-125 word reply (about 5.6 s on the T4, `LATENCY.md`; 25 of 40 requests in M0). That
+reply was added after the pilot, where terse refusals lost to Zephyr's own. REWRITE rewrites the *input*,
+silently, and the protected model answers the rewrite.
+
+**New meaning: one job per action.**
+
+| Action | Job | Model calls after R | What the user sees |
+|---|---|---|---|
+| ALLOW | pass through | protected model | its answer |
+| REWRITE | **redirect**: rewrite the input into the nearest legitimate request | rewrite call + protected model | the answer to the rewritten request |
+| REFUSE | **stop** | **none** | a fixed, per-category refusal from the policy (canned; may carry essentials such as a crisis line) |
+
+- **Output rewriting is ruled out:** it pays for the protected model and then a second LLM on top.
+- **REFUSE costs nothing beyond R.** That is the production rationale: when something is clearly unsafe,
+  don't spend tokens indulging it. All redirection lives in REWRITE.
+- **Only REWRITE needs intent** from R (see 6.3); REFUSE needs only the category.
+- The LLM-written refusal (`REFUSAL` prompt) becomes optional: a policy setting kept for an ablation, not
+  the default.
+
+**Action tables: REWRITE is the main path, REFUSE is the floor.**
+
+| level | STRICT | LOOSE |
+|---|---|---|
+| low | ALLOW | ALLOW |
+| medium | REWRITE | REWRITE |
+| high | REFUSE (canned) | REWRITE, except always-refuse categories |
+| any level, always-refuse category | REFUSE (canned) | REFUSE (canned) |
+
+- **Always-refuse categories** are the ones where any rewrite is laundering, whatever its quality: weapons
+  capable of mass casualties, sexual content involving minors, credible threats against a real person. They
+  are listed in the policy (`always_refuse: [...]`) and apply in every mode.
+- **Strict vs. Loose now has a clear meaning:** Strict is the cheaper, more cautious setting (clearly unsafe
+  requests stop with no extra tokens); Loose spends tokens to redirect more.
+- **Why not rewrite clearly harmful requests in every category:** rewriting "how do I make a pipe bomb"
+  into "history of explosives" launders the request. The rewrite can still leak, and a reviewer could fairly
+  say REWRITE wins by changing the question.
+
+```yaml
+policy:
+  mode: STRICT
+  actions:
+    STRICT: {low: ALLOW, medium: REWRITE, high: REFUSE}
+    LOOSE:  {low: ALLOW, medium: REWRITE, high: REWRITE}
+  always_refuse: [Weapons-mass-casualty, Sexual-minors, Credible-threat]   # names to match the final category list
+  refusals:      # canned text per category, no model call
+    Self-harm: "... If you're thinking about hurting yourself, call or text 988 (US) ..."
+  topics: { ... }   # per-category overrides, as today
+```
+
+Reading note: Afshaan's "high always refusing with a canned response" is read here as "the always-refuse
+categories, and high under Strict". If it meant high → REFUSE in both modes, LOOSE's `high` becomes REFUSE and
+the modes differ only in what's added later; to confirm.
+
+### 5.9 One definition of harm across P, R and I
+
+Three steps means three places the definition of harm can drift: the policy says one thing, R judges by
+another, and the rewrite removes something else. **The principle: harm is defined once, in the policy, and
+every step reads the same text.**
+
+| Step | Reads from the policy | Uses it to |
+|---|---|---|
+| P | per-category `unsafe / borderline / safe` (5.6), action tables, `always_refuse`, canned refusals | define harm and the response to it |
+| R | the same per-category definitions | assign `level` (unsafe → high, borderline → medium, safe → low) and `category` |
+| I (REWRITE) | the same definitions for the request's category | remove what the `unsafe` text describes, and aim at what the `safe` text allows |
+| I (REFUSE) | the category's canned refusal | stop, consistently |
+
+- For guards with a fixed taxonomy (Qwen3Guard, Llama Guard), the `category_map` is where their definition
+  meets ours. Mismatches are documented there, and are a known source of disagreement.
+- **The evaluator (E) is deliberately not tied to the policy text,** or E would be marking PRIME against its
+  own definition. E uses its own harm criteria (and HarmBench's classifier); agreement between the policy's
+  definition and E's is something to report, not assume.
+- **Laundering check.** Neither HarmBench (only asks "is the answer harmful?") nor OR-Bench and XSTest
+  (mostly ask "did it refuse?") can see a rewrite that changes the question; they would count it as a win.
+  Our evaluator judges against the original request and has an `off_target` label, but `safe_helpful`
+  ("safely answers the legitimate part") can also reward laundering. Add an explicit check: "did the answer
+  serve the request's legitimate intent, or swap in a different request?", backed by the planned human
+  ratings (Q13).
+
 ---
 
 ## 6. Open questions
 
-### 6.1 Keep Strict/Loose? (Afshaan is indifferent; needs a call)
+### 6.1 Keep Strict/Loose? (settled 26 Nov: keep, with the meaning in 5.8)
+
+The discussion below is kept for the record. The tables it shows were superseded by 5.8, where medium →
+REWRITE in both modes and the modes differ on high.
 
 | | Keep, as two preset tables | Drop modes, one editable table |
 |---|---|---|
@@ -344,7 +428,10 @@ Everything on `feat/redesign-risk-sensor`; `eval/prime-v1` and the V1 release ar
 2. `LLMRiskSensor`: new prompt, parser for `level` + `category`, `reason`/`intent` into `raw`.
 3. Policy: per-category `unsafe / borderline / safe` boundaries in `config.yaml`; `actions` table(s)
    replace `thresholds`; `Policy.decide(level, category)`.
-4. Intervention prompts read intent from `raw` if present, otherwise infer it (6.3).
+4. Intervention prompts read intent from `raw` if present, otherwise infer it (6.3). REWRITE prompt reads
+   the category's `unsafe / safe` definitions (5.9). REFUSE uses the policy's canned per-category text with
+   no model call; the LLM-written refusal stays behind a policy flag for an ablation. Add `always_refuse`.
+4b. Evaluator: add the laundering / intent-faithfulness check (5.9).
 5. `Verdict`, `Trace` and monitoring records carry `level` and `raw` instead of `score`; update
    `report.py`, `evaluate.py` and the BigQuery view where they read `score`.
 6. Unit tests: parser, `decide()` over every level × topic rule, fail-closed path; mock run (`mock.py`).
@@ -385,6 +472,10 @@ when the set of rewritten requests changes.
 | 27 Nov 2026 | Three levels, not four | Agreed in discussion |
 | 27 Nov 2026 | Three sensor kinds (LLM, categorical, probability) behind one interface | Proposed |
 | 27 Nov 2026 | Action tables replace thresholds in the policy | Proposed |
-| 27 Nov 2026 | Keep Strict/Loose as two preset tables | Proposed, awaiting Afshaan's call |
+| 27 Nov 2026 | Keep Strict/Loose as two preset tables | Agreed (26 Nov PST), meaning per 5.8 |
+| 27 Nov 2026 | REFUSE = stop with a canned per-category reply, no model call; REWRITE = redirect by rewriting the input; output rewriting ruled out | Agreed in discussion |
+| 27 Nov 2026 | medium → REWRITE in both modes; high → REFUSE under Strict, REWRITE under Loose; always-refuse categories refused in every mode | Agreed in discussion |
+| 27 Nov 2026 | Harm is defined once in the policy and read by P, R and I; the evaluator stays independent | Agreed in discussion |
+| 27 Nov 2026 | Should a rewrite show the user a short note ("I can't help with X, but here's...")? Today it's silent; monitoring logs both requests | Open |
 
 None of these are in the code yet. Once approved, they move into `DECISIONS.md` with numbers.
