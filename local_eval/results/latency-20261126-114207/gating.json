@@ -1,0 +1,72 @@
+{
+ "Qwen/Qwen3Guard-Gen-0.6B": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "Qwen/Qwen3Guard-Gen-4B": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "Qwen/Qwen3Guard-Gen-8B": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "ibm-granite/granite-guardian-3.1-2b": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "ibm-granite/granite-guardian-3.2-5b": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "ibm-granite/granite-guardian-3.3-8b": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "Qwen/Qwen2.5-1.5B-Instruct": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "Qwen/Qwen2.5-0.5B-Instruct": {
+  "gated": false,
+  "license": "apache-2.0",
+  "license_name": null
+ },
+ "meta-llama/Llama-Guard-3-1B": {
+  "gated": "manual",
+  "license": "llama3.2",
+  "license_name": null
+ },
+ "meta-llama/Llama-Guard-3-8B": {
+  "gated": "manual",
+  "license": "llama3.1",
+  "license_name": null
+ },
+ "meta-llama/Llama-Guard-4-12B": {
+  "gated": "manual",
+  "license": "other",
+  "license_name": "llama4"
+ },
+ "google/shieldgemma-2b": {
+  "gated": "manual",
+  "license": "gemma",
+  "license_name": null
+ },
+ "google/shieldgemma-9b": {
+  "gated": "manual",
+  "license": "gemma",
+  "license_name": null
+ },
+ "allenai/wildguard": {
+  "gated": "auto",
+  "license": "apache-2.0",
+  "license_name": null
+ }
+}

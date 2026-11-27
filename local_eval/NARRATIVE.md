@@ -40,7 +40,7 @@ steers the protected model toward that outcome, rather than just blocking it.
 - **Where the model complies with harm, PRIME helps clearly:** HarmBench harmful answers went from 9 of 10 to 0 of 10.
 - **Where the model already behaves well, PRIME currently hurts:** it over-flags harmless prompts that sound
   risky, and its refusals are terser than the model's own. Model alone preferred in 17 of 40, PRIME in 10.
-- **Cost:** about 5 s per request added on a T4 (two 7B LLM calls).
+- **Cost:** about 5 s per request added on a T4 (two 7B LLM calls). Breakdown and fixes are in `LATENCY.md`.
 These are rough rates from 40 requests. Fixes are in progress (refusal quality, risk sensor calibration).
 
 ## Claims we want to be able to make (and the experiment for each)
@@ -52,6 +52,7 @@ These are rough rates from 40 requests. Fixes are in progress (refusal quality, 
 | Policy is configurable without retraining | Toggle topic rules / STRICT vs LOOSE; measure behaviour change | Planned |
 | PRIME adds value beyond picking a safer model | Model + PRIME vs a strong safety-trained model alone | Open (Q1) |
 | Extends to image generation | `eval/image-exploration` plan | Hypothesis (Q10) |
+| Low enough latency to sit in front of a live app | Per-call latency benchmark on a T4 (`LATENCY.md`) | **Not as is:** +3.5 s before the first token on ALLOW, about 9 s on REFUSE, vs 0.13 s for a 0.6B guard classifier. Levers in Q19 |
 
 ## Known weaknesses to address or acknowledge
 Prompted (not trained) risk sensing is less calibrated than trained guards; latency; harness complexity;

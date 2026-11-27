@@ -44,3 +44,4 @@ this file wins.
 | Q16 | Retention and redaction of prompts and answers in monitoring records | Records are stored verbatim today, including harmful content; needs a retention period and PII redaction before production |
 | Q17 | Production serving and the `prod` source | Monitoring is built for it (`Prime.run(..., monitor)`), but there is no serving path yet |
 | Q18 | Dashboard as a reusable template | Once the Looker Studio report is built, use its id as `c.reportId` in the Linking API URL so new reports come with the charts |
+| Q19 | **Latency for a live app: replace the 7B risk sensor with a small trained guard (e.g. Qwen3Guard-Gen-0.6B) and stream or cap refusals?** | T4, `LATENCY.md`: R takes 3.45 s, the refusal 5.6 s; Qwen3Guard-0.6B takes 0.13 s. A short R output alone saves 2 s. Needs a quality comparison (guard as R vs the prompted 7B R) before it is adopted |
