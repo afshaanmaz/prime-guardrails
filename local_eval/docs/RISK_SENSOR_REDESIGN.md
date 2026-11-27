@@ -430,6 +430,95 @@ sensors). Either is defensible; the reason is the stronger story.
 
 ---
 
+### 6.6 From a plain-English policy to the structured policy (backlog Q23, fast follow)
+
+**Intent (Afshaan, 26 Nov):** the policy layer should take a plain-English brand guide ("don't talk about our
+competitors", "block anything unsafe", "be supportive on mental health") and turn it into rules the code can
+use. Today, and in this redesign as written, the user writes YAML by hand. The redesign adds fields (per-category
+unsafe / borderline / safe, action tables, refusal texts, guard maps), so the burden grows.
+
+**Same policy, three ways** (trimmed):
+
+*Plain English (what a user writes):*
+```text
+Block anything unsafe. Be relaxed about borderline questions: help with the safe part.
+Don't talk about our competitors (Apple, OpenAI); answer in general terms instead.
+If someone seems to be struggling emotionally, be supportive, don't give clinical advice, and mention a helpline.
+Never comment on active geopolitical conflicts.
+```
+*Compiled:* `mode: LOOSE`; the default safety categories (shipped with PRIME, 5.6); topic rules for
+Competitors (REFUSE + instruction), Mental Health (REWRITE + instruction) and Geopolitical (REFUSE + instruction).
+
+**Most of the burden disappears with a shipped default.** The general safety categories (Violence, Hate, ...)
+are the same for nearly every user, so PRIME ships them, with the floor. A user only writes their own topic
+rules and picks Strict or Loose.
+
+**Why not read the plain text at runtime** (the gpt-oss-safeguard approach): an LLM would reinterpret the
+text on every request, so routing goes back to an LLM, decisions stop being reproducible from the log, the
+same sentence can be read differently on different requests, trained guards can't read it at all, and every
+request carries a long prompt.
+
+**Compile once, run deterministically.** Options for the compile step:
+
+| Option | How | Pros | Cons |
+|---|---|---|---|
+| Code only | Templates or keyword rules: "strict/relaxed" picks the mode; "don't talk about X, Y" makes a topic rule with names | No LLM; fully predictable | Only handles phrasings we anticipated; can't write category boundaries |
+| Small LLM, offline | One call per policy change (not per request) with a fixed JSON schema; code validates the output | Handles free text; cost and latency don't matter because it runs once | Can misread intent, so it needs a review step; one more model to report |
+| Form + LLM | A short form (mode, competitors list, topics to avoid) in code; the LLM only drafts definitions and refusal texts | Most fields are exact; the LLM's job is small | Less "just paste your brand guide" |
+
+- **It is not another LLM in the request path.** The compile step runs when the policy changes. The runtime
+  still makes at most two model calls per request (D4).
+- Recommended direction: start with **form + small LLM**, validated against a schema in code, with a person
+  reviewing the compiled policy (shown as a readable diff) before it's used. The compiled policy is versioned
+  and hashed, and its hash is logged with every decision.
+- **Sorting sentences into kinds is the hard part:** a harm rule (category × level), a topic rule (level
+  doesn't matter: any competitor mention), or a style instruction ("use our brand voice"). Style goes into the
+  intervention prompts or is out of scope.
+- **Limit: PRIME only checks the input.** On ALLOW, the protected model never sees the policy, so it could
+  still name a competitor in its answer. Some brand rules need an output-side check (a non-goal today).
+- **How to show it works:** compile a short brand policy and compare it with a hand-written one on the same
+  requests; compile the same text twice and check the rules match.
+- Tension noted by Afshaan: fewer claims plus more benchmarks, versus building what's actually useful. This
+  is a primary goal for PRIME, so it's a fast follow after the risk sensor, not shelved.
+
+### 6.7 Category coverage (backlog Q24)
+
+Our policy has 11 categories: Safe, Violence, Sexual, Illegal, Self-harm, Hate, Privacy, Competitors, Mental
+Health, Geopolitical, Other. Trained guards use larger, standard lists:
+
+| Llama Guard 3/4 (MLCommons hazards) | Qwen3Guard | Ours today |
+|---|---|---|
+| S1 Violent crimes | Violent | Violence |
+| S2 Non-violent crimes | Non-violent illegal acts | Illegal |
+| S3 Sex-related crimes | Sexual content or acts | Sexual |
+| **S4 Child sexual exploitation** | (in Sexual) | (in Sexual) |
+| **S5 Defamation** | - | (in Other) |
+| **S6 Specialized advice** (medical, legal, financial) | - | - (Mental Health is a topic rule) |
+| S7 Privacy | PII | Privacy |
+| **S8 Intellectual property** | Copyright violation | - |
+| **S9 Indiscriminate weapons** (CBRN, explosives) | (in Violent) | (in Violence) |
+| S10 Hate | (in Unethical acts) | Hate |
+| S11 Suicide and self-harm | Suicide and self-harm | Self-harm |
+| S12 Sexual content | Sexual content or acts | Sexual |
+| **S13 Elections** | Politically sensitive topics | (Geopolitical is narrower) |
+| **S14 Code interpreter abuse** | - | (in Illegal) |
+| - | Jailbreak (input only) | - (prompt injection is Q12) |
+
+OpenAI's moderation API splits further (harassment and harassment/threatening, hate/threatening,
+illicit/violent, self-harm intent vs instructions, sexual/minors, violence/graphic).
+
+**Gaps that matter now:**
+- **The floor needs its own categories.** Child sexual exploitation and mass-casualty weapons are folded into
+  Sexual and Violence, so `always_refuse` has nothing to point at. Damaging cyberweapons (Anthropic's floor)
+  is folded into Illegal.
+- **Specialized advice, intellectual property, elections and defamation** are missing or lumped into Other.
+
+**Proposal:** a base taxonomy aligned to MLCommons / Llama Guard's 14 hazards (the closest thing to a standard,
+and it makes guard `category_map`s nearly one-to-one), plus business topics (Competitors, Mental Health,
+Geopolitical) as topic rules. Trade-off: more categories means more definitions to write and a longer LLM
+sensor prompt; the shipped default (6.6) absorbs the writing cost. Floor categories (S4, S9, plus cyberweapons)
+are needed before the floor can work; the rest can follow.
+
 ## 7. Implementation plan
 
 Everything on `feat/redesign-risk-sensor`; `eval/prime-v1` and the V1 release are untouched.
@@ -458,6 +547,9 @@ Everything on `feat/redesign-risk-sensor`; `eval/prime-v1` and the V1 release ar
 9. Cut-off tuning set (written by us) and a small script that picks cut-offs and records them.
 
 **Phase 3: experiments** (section 8)
+
+**Fast follow (backlog):** plain-English policy compile step (6.6, Q23); category coverage aligned to
+MLCommons (6.7, Q24). The floor categories from 6.7 are needed in Phase 1 for `always_refuse` to work.
 
 ---
 
