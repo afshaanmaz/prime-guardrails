@@ -305,11 +305,22 @@ silently, and the protected model answers the rewrite.
 | low | ALLOW | ALLOW |
 | medium | REWRITE | REWRITE |
 | high | REFUSE (canned) | REWRITE, except always-refuse categories |
-| any level, always-refuse category | REFUSE (canned) | REFUSE (canned) |
+| high, always-refuse category | REFUSE (canned) | REFUSE (canned) |
 
 - **Always-refuse categories** are the ones where any rewrite is laundering, whatever its quality: weapons
   capable of mass casualties, sexual content involving minors, credible threats against a real person. They
   are listed in the policy (`always_refuse: [...]`) and apply in every mode.
+- **The floor triggers on high risk in the category, not on any mention of it.** Labs block serious uplift,
+  not the topic: a question about Manhattan Project history is low or medium and follows the normal table.
+- **Industry check (26 Nov, separate thread):** sexual content involving minors is on every lab's
+  non-negotiable floor (OpenAI, Anthropic, Google, Llama Guard S4); mass-casualty weapons are floored by
+  OpenAI and Anthropic; Anthropic also floors damaging cyberweapons and attacks on critical infrastructure.
+  Credible threats against a real person is not a named floor anywhere, so the paper presents it as PRIME's
+  choice. Candidate addition: damaging cyberweapons. The broader trend (OpenAI safe-completions, Model Spec,
+  Anthropic constitution, Gemini filters off by default) is away from flat refusals toward helping with the
+  safe part, which is what REWRITE does; configurable above a fixed floor is the industry pattern.
+- **Canned refusals are a helpful decline, not a bare "no":** each category's text says what PRIME won't
+  help with and points to a resource (crisis line, reporting channel). Still no model call.
 - **Strict vs. Loose now has a clear meaning:** Strict is the cheaper, more cautious setting (clearly unsafe
   requests stop with no extra tokens); Loose spends tokens to redirect more.
 - **Why not rewrite clearly harmful requests in every category:** rewriting "how do I make a pipe bomb"
@@ -474,7 +485,7 @@ when the set of rewritten requests changes.
 | 27 Nov 2026 | Action tables replace thresholds in the policy | Proposed |
 | 27 Nov 2026 | Keep Strict/Loose as two preset tables | Agreed (26 Nov PST), meaning per 5.8 |
 | 27 Nov 2026 | REFUSE = stop with a canned per-category reply, no model call; REWRITE = redirect by rewriting the input; output rewriting ruled out | Agreed in discussion |
-| 27 Nov 2026 | medium → REWRITE in both modes; high → REFUSE under Strict, REWRITE under Loose; always-refuse categories refused in every mode | Agreed in discussion |
+| 27 Nov 2026 | medium → REWRITE in both modes; high → REFUSE under Strict, REWRITE under Loose; always-refuse categories refused at high risk in every mode (floor triggers on high, not on mention) | Agreed in discussion |
 | 27 Nov 2026 | Harm is defined once in the policy and read by P, R and I; the evaluator stays independent | Agreed in discussion |
 | 27 Nov 2026 | Rewrites stay silent: the user sees only the answer to the rewritten request, no note; monitoring logs `original_request`, `rewritten_request` and `model_input` | Agreed (Afshaan: "they don't need anything explicit") |
 
