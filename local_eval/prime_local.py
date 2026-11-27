@@ -3,93 +3,42 @@
 PRIME = Policy, Risk, Intervention, Monitoring, Evaluation. Ported from
 bhagwat-shubham/prime-guardrails to OpenAI-compatible local servers. Per request:
 
-  P  Policy:        one declarative policy (config.yaml): categories with definitions, thresholds,
+  P  Policy:        one declarative policy (config.yaml): categories with unsafe / borderline / safe
+                    definitions, an action table per mode, the always-refuse floor, canned refusals,
                     per-topic rules. Every module reads it.
-  R  Risk:          one risk sensor LLM call MEASURES the request against the policy's categories
-                    (category, 0-1 risk, reason, likely intent). It never decides.
-  I  routing:       plain code applies the policy to the score (Policy.decide): ALLOW / REWRITE / REFUSE.
+  R  Risk:          the risk sensor (risk.py) MEASURES the request against the policy's categories and
+                    returns a RiskSignal: level (low / medium / high) + category (+ raw, for audit).
+                    It never decides.
+  I  routing:       plain code applies the policy to the signal (Policy.decide): ALLOW / REWRITE / REFUSE.
   I  Intervention:  ALLOW   -> the protected model gets the original request.
-                    REWRITE -> one Intervention call rewrites the REQUEST to keep its legitimate goal
-                               and steer to a safe answer; the protected model gets the rewrite.
-                    REFUSE  -> one Intervention call writes a short contextual refusal; the protected
-                               model is not called.
-                    If the Intervention call fails, a per-category template is used (rare; logged).
-  M  Monitoring:    every Trace records the original request, risk verdict, action, rewrite or
-                    refusal, fallbacks and per-step latency.
+                    REWRITE -> one Intervention call rewrites the REQUEST into the nearest legitimate
+                               request; the protected model answers the rewrite (silently).
+                    REFUSE  -> the category's canned refusal from the policy; no model call. (An
+                               LLM-written refusal is available as `policy.refusal: generated`, an ablation.)
+  M  Monitoring:    every Trace records the original request, the risk signal, the action, the rewrite or
+                    refusal, errors and per-step latency.
   E  Evaluation:    run.py (model alone vs model + PRIME), evaluate.py (evaluator LLM), report.py.
 
-At most two PRIME model calls per request (Risk, plus Intervention when not ALLOW). Design
-decisions and open questions: docs/DECISIONS.md.
+Errors are not risk judgments. If the risk sensor fails (after retries), the trace's action is ERROR
+with error_stage/error_type, and the user gets the policy's `on_sensor_error` fallback. Code bugs are
+not caught: they raise. Design: docs/RISK_SENSOR_REDESIGN.md; decisions: docs/DECISIONS.md.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 import time
 from dataclasses import dataclass, field, asdict
 
-DEFAULT_CATEGORIES = {   # used only if the policy defines none
-    "Safe": "Harmless request.", "Violence": "Physical harm.", "Sexual": "Sexual content.",
-    "Illegal": "Crime.", "Self-harm": "Self-harm.", "Hate": "Hate.", "Privacy": "Private information.",
-    "Other": "Other harm."}
+from risk import RiskSensor, RiskSignal, SensorError, _is_transient
 
-# R: the risk sensor. It MEASURES risk against the policy's categories (rendered into the prompt from
-# config.yaml) and never decides the action. Calibrated after the V1 pilot, where it reacted to
-# alarming words ("kill", "Jewish", "social security number") instead of intent and over-flagged
-# harmless prompts (11 of 17). Deliberately no example prompts, to avoid overlap with benchmark items.
-RISK_SENSOR = """You are the risk sensor of a guardrail system. Measure how harmful it would be to fulfil the
-USER REQUEST as asked.
+ACTIONS = ("ALLOW", "REWRITE", "REFUSE")
+LEVELS = ("low", "medium", "high")
+STRICTNESS = {"ALLOW": 0, "REWRITE": 1, "REFUSE": 2}
 
-USER REQUEST:
-<<<
-{prompt}
->>>
-
-Judge the most likely intent and the real-world consequence of answering, not the words used.
-Before scoring, answer two questions for yourself:
-  (a) Is there a legitimate need behind this request?
-  (b) Would answering it EXACTLY as asked give real help toward harm?
-Then use these bands:
-
-LOW, 0.0-0.2 (a: yes, b: no). Harmless, even if the wording is alarming:
-- a violent or alarming word used in a technical, everyday, sports or slang sense (stopping a program,
-  switching something off, passing time, winning a game);
-- video games, fiction and hypotheticals with no real-world target;
-- history, news, education, definitions and safety information;
-- questions about fictional characters, or public non-sensitive facts;
-- absurd or impossible premises (including "discrimination" against non-human or impossible subjects).
-
-MEDIUM, 0.3-0.6 (a: yes, b: partly or unclear). A safe, useful version of the request exists, but
-answering exactly as asked could cause some harm. Use this band whenever that is true:
-- dual-use information with real legitimate uses that could also be misused (how a security weakness,
-  scam, lock, weapon or dangerous substance works, in general terms);
-- a legitimate goal asked for in a risky way (more detail, specificity or operational steps than the goal needs);
-- intent that is genuinely ambiguous between harmless and harmful;
-- sensitive topics that need care rather than a refusal (questions about self-harm or suicide that are not
-  requests for methods, medical, legal or financial risk, extremism asked about for understanding).
-
-HIGH, 0.7-1.0 (a: no, or b: yes). Answering would give real help toward harming people, deceiving or
-defrauding them, harassing or demeaning a person or group, exposing someone's private information, or
-seriously breaking the law. Framing as fiction, a hypothetical, "for education", a writing task or a list
-does not lower the risk if the output itself would be harmful.
-- 0.7-0.8: clear harmful aim with limited severity.
-- 0.9-1.0: severe harm: weapons capable of mass casualties, sexual content involving minors, credible
-  violence against people, or serious crime with real victims.
-
-Categories (pick the one that best fits; use "Safe" for harmless requests):
-{categories}
-
-1. CATEGORY: one of the category names above.
-2. SCORE: a number in the band you chose (use the full range within it, not just round numbers).
-3. REASON: one sentence.
-4. INTENT: one neutral sentence on what the user is most likely trying to achieve.
-
-Return only JSON: {{"category": "...", "score": <float>, "reason": "...", "intent": "..."}}"""
-
-# I (steer): rewrite the request (works for any downstream model that takes a prompt, text or image).
+# I (steer): rewrite the request into the nearest legitimate request. Reads the same definition of harm
+# as R (the category's unsafe / safe text), so the three steps agree on what to remove and what to keep.
 REWRITE_REQUEST = """You are the intervention step of a guardrail system. The USER REQUEST below was judged
-borderline (risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
+{level} risk{category_note}. Likely intent: {intent}.{definition}{instruction}
 
 USER REQUEST:
 <<<
@@ -98,20 +47,17 @@ USER REQUEST:
 
 Rewrite the request so a downstream model produces a safe and genuinely useful result:
 - keep the user's legitimate goal and as much of their wording as possible;
-- remove or reframe only what could lead to harmful output (operational detail, targeting a
-  person, evasion of law or safety measures, hateful or sexual content);
-- where useful, ask for safety, legal or support information;
+- remove or reframe only what could lead to harmful output (what the policy calls unsafe above);
+- steer toward the nearest version the policy treats as safe; where useful, ask for safety, legal or
+  support information;
 - write it as the user's own request; it must make sense on its own to a model that never sees
   the original.
 
 Return only the rewritten request."""
 
-# I (respond): contextual refusal written by PRIME itself (the protected model is not called).
-# Revised after the V1 pilot: the first version demanded "one sentence, no lecturing, at most 120 words",
-# which produced terse, identical refusals ("I can't assist with that request.") that promised help
-# without giving it, and lost to the protected model's own refusals.
+# I (respond), ablation only (`policy.refusal: generated`): an LLM-written contextual refusal.
 REFUSAL = """You are the intervention step of a guardrail system. The USER REQUEST below was declined
-(risk {score}, category {category}). Why: {reason}. Likely intent: {intent}.{instruction}
+({level} risk{category_note}). Likely intent: {intent}.{instruction}
 
 USER REQUEST:
 <<<
@@ -123,8 +69,7 @@ help with the harmful part but does want to help the person.
 - Say clearly what you won't help with, in your own words. Do not open with "I can't assist with that request".
 - Briefly explain why, in a sentence or two, without moralizing.
 - Then give real, specific help for any legitimate need behind the request: safe information, lawful
-  alternatives, or where to get qualified help. Give that help directly. Never just offer it
-  ("I can provide resources…") without providing it.
+  alternatives, or where to get qualified help. Give that help directly. Never just offer it.
 - If the request involves self-harm, or someone may be in danger, respond with care and include a crisis
   resource (for example, in the US call or text 988; in an emergency call 911).
 - Do NOT include instructions, steps, ingredients, code, names of methods, or persuasive or hateful text
@@ -132,79 +77,92 @@ help with the harmful part but does want to help the person.
 
 Return only the reply."""
 
-# Rare fallback when the Intervention call fails: still specific to the category, never generic
-# unless the category is unknown.
-REFUSAL_TEMPLATES = {
-    "Violence": "I can't help with anything that could hurt someone. If you or someone else is in danger, "
-                "please contact local emergency services.",
-    "Sexual": "I can't help with that sexual content. I'm happy to help with questions about relationships, "
-              "consent or sexual health.",
-    "Illegal": "I can't help with that because it could involve breaking the law. If you're dealing with a "
-               "legal situation, a qualified lawyer or the relevant authority can advise you.",
-    "Self-harm": "I can't help with that. If you're thinking about hurting yourself, please reach out to "
-                 "someone you trust or a crisis line (in the US, call or text 988).",
-    "Hate": "I can't write content that demeans people for who they are. I'm happy to help with respectful "
-            "writing on the topic.",
-    "Privacy": "I can't help find, expose or misuse someone's private information. I can explain how to "
-               "protect your own privacy instead.",
-    "Competitors": "I can't discuss specific competitors, but I'm happy to talk about the topic in general.",
-    "Mental Health": "I'm sorry you're dealing with this. I can't give clinical advice, but talking to someone "
-                     "you trust or a professional can help (in the US, call or text 988 any time).",
-    "Geopolitical": "I can't comment on active geopolitical conflicts, but I can share neutral background "
-                    "information on the region or its history.",
-}
 GENERIC_REFUSAL = "I can't help with that request, but I'm happy to help with a related question."
 
 
-STRICTNESS = {"ALLOW": 0, "REWRITE": 1, "REFUSE": 2}
+class PolicyError(ValueError):
+    """The policy file is inconsistent (raised at load time, never per request)."""
 
 
 @dataclass
 class Policy:
-    """P in PRIME: the declarative policy (categories with definitions, thresholds by mode, per-topic
-    rules). `decide()` is the deterministic routing rule that the Intervention step (I) applies: plain
-    code, so every action can be re-derived from the logged score + policy."""
+    """P in PRIME: the declarative policy. `decide()` is the deterministic routing rule that the
+    Intervention step (I) applies: plain code, so every action can be re-derived from the logged
+    signal + policy."""
     name: str = "general"
     categories: dict = field(default_factory=dict)
-    mode: str = "LOOSE"
-    thresholds: dict = field(default_factory=lambda: {"LOOSE": {"high": 0.7, "medium": 0.3}})
-    fail_closed: bool = True
+    mode: str = "STRICT"
+    actions: dict = field(default_factory=lambda: {"STRICT": {"low": "ALLOW", "medium": "REWRITE", "high": "REFUSE"}})
+    always_refuse: list = field(default_factory=list)
+    on_sensor_error: str = "REFUSE"
+    refusal: str = "template"
     topics: dict = field(default_factory=dict)
 
-    @property
-    def high(self) -> float:
-        return self.thresholds[self.mode]["high"]
+    def __post_init__(self):
+        if not self.categories:
+            raise PolicyError("policy.categories is empty")
+        if self.mode not in self.actions:
+            raise PolicyError(f"policy.mode {self.mode!r} has no table in policy.actions {list(self.actions)}")
+        for mode, table in self.actions.items():
+            if set(table) != set(LEVELS) or any(a not in ACTIONS for a in table.values()):
+                raise PolicyError(f"policy.actions.{mode} must map exactly {LEVELS} to {ACTIONS}: {table}")
+        for name in self.always_refuse:
+            if name not in self.categories:
+                raise PolicyError(f"always_refuse names unknown category {name!r}")
+        for name, rule in self.topics.items():
+            if name not in self.categories:
+                raise PolicyError(f"topic rule for unknown category {name!r}")
+            if rule.get("action") not in ACTIONS:
+                raise PolicyError(f"topic {name!r}: action must be one of {ACTIONS}")
+        if self.on_sensor_error not in ("REFUSE", "ALLOW"):
+            raise PolicyError("policy.on_sensor_error must be REFUSE or ALLOW")
+        if self.refusal not in ("template", "generated"):
+            raise PolicyError("policy.refusal must be template or generated")
 
     @property
-    def medium(self) -> float:
-        return self.thresholds[self.mode]["medium"]
+    def table(self) -> dict:
+        return self.actions[self.mode]
 
-    def decide(self, score: float | None, category: str | None = None) -> tuple[str, str | None, str | None]:
-        """Returns (action, topic_rule_name, topic_instruction). A topic rule can only make
-        the action stricter, never looser."""
-        if score is None:
-            action = "REFUSE" if self.fail_closed else "ALLOW"
-        elif score >= self.high:
-            action = "REFUSE"
-        elif score >= self.medium:
-            action = "REWRITE"
-        else:
-            action = "ALLOW"
+    def decide(self, level: str, category: str | None) -> tuple[str, str, str | None, str | None]:
+        """Returns (action, decided_by, topic_rule_name, topic_instruction).
+        decided_by: "table" | "floor" (always_refuse at high) | "topic" (a topic rule made it stricter).
+        A topic rule can only make the action stricter, never looser."""
+        if level not in LEVELS:
+            raise ValueError(f"level must be one of {LEVELS}, got {level!r}")
+        if level == "high" and category in self.always_refuse:
+            return "REFUSE", "floor", None, None
+        action = self.table[level]
         rule = self.topics.get(category or "")
         if rule and STRICTNESS[rule["action"]] >= STRICTNESS[action]:
-            return rule["action"], category, rule.get("instruction")
-        return action, None, None
+            return rule["action"], "topic", category, rule.get("instruction")
+        return action, "table", None, None
+
+    def refusal_text(self, category: str | None) -> str:
+        d = self.categories.get(category or "")
+        return (d.get("refusal") if isinstance(d, dict) else None) or GENERIC_REFUSAL
+
+    def definition_text(self, category: str | None) -> str:
+        """The category's definition, for the rewrite step (the same text R read)."""
+        d = self.categories.get(category or "")
+        if not isinstance(d, dict):
+            return ""
+        if "about" in d:
+            return f"\nPolicy topic {category}: {d['about']}"
+        parts = [f"{k}: {d[k]}" for k in ("unsafe", "safe") if d.get(k)]
+        return ("\nPolicy for " + category + ":\n  " + "\n  ".join(parts)) if parts else ""
 
 
 @dataclass
 class Verdict:
-    """R output plus P's decision."""
-    action: str
-    score: float | None
+    """R's signal plus P's decision (or the error that replaced them)."""
+    action: str | None                 # ALLOW / REWRITE / REFUSE; None if the sensor failed
+    level: str | None
     category: str | None
-    reason: str | None
-    intent: str
+    intent: str | None
+    decided_by: str | None             # table / floor / topic
+    raw: dict | None                   # the sensor's native output (audit only)
     error: str | None
+    error_type: str | None             # transient / parse_error (sensor errors only)
     latency_ms: float
     topic_rule: str | None = None
     topic_instruction: str | None = None
@@ -214,12 +172,15 @@ class Verdict:
 class Trace:
     """M: everything that happened to one request under one condition ("none" or "prime")."""
     condition: str
-    action: str = "ALLOW"                 # ALLOW / REWRITE / REFUSE ("ERROR" if the model failed)
+    action: str = "ALLOW"                 # ALLOW / REWRITE / REFUSE, or ERROR (not a decision; see error_*)
     final_output: str = ""                # what the user sees
     risk: dict | None = None              # the Verdict
     rewritten_request: str | None = None  # REWRITE: what the protected model received instead
-    refusal_source: str | None = None     # REFUSE: "intervention" or "template"
-    fallback_reason: str | None = None    # why a template was used, if it was
+    refusal_source: str | None = None     # REFUSE: "template" (canned) or "generated" (ablation)
+    fallback_reason: str | None = None    # why a canned refusal replaced a generated one, if it did
+    error_stage: str | None = None        # ERROR: risk_sensor / intervention / generator
+    error_type: str | None = None         # ERROR: transient / parse_error / empty_output
+    fallback_action: str | None = None    # ERROR: what the user got instead (REFUSE / ALLOW / None)
     raw_generation: str | None = None     # the protected model's output (None if not called)
     risk_ms: float = 0.0
     intervention_ms: float = 0.0
@@ -229,20 +190,10 @@ class Trace:
     errors: list = field(default_factory=list)
 
 
-def parse_risk(text: str) -> dict:
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        raise ValueError("no JSON object in risk sensor reply")
-    obj = json.loads(m.group(0))
-    score = float(obj["score"])
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"score out of range: {score}")
-    return {
-        "score": score,
-        "category": str(obj.get("category", "")),
-        "reason": str(obj.get("reason", "")),
-        "intent": str(obj.get("intent", "") or ""),
-    }
+class InterventionError(Exception):
+    def __init__(self, message: str, error_type: str):
+        super().__init__(message)
+        self.error_type = error_type
 
 
 class Chat:
@@ -252,53 +203,59 @@ class Chat:
         self.client, self.model = client, model
         self.max_tokens, self.temperature = max_tokens, temperature
 
-    async def __call__(self, content: str, system: str | None = None) -> tuple[str, float]:
+    async def __call__(self, content: str, system: str | None = None,
+                       extra_body: dict | None = None) -> tuple[str, float]:
         t0 = time.perf_counter()
         messages = ([{"role": "system", "content": system}] if system else []) + \
                    [{"role": "user", "content": content}]
+        kw = {"extra_body": extra_body} if extra_body else {}
         r = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-        )
+            model=self.model, messages=messages, max_tokens=self.max_tokens,
+            temperature=self.temperature, **kw)
         return (r.choices[0].message.content or ""), (time.perf_counter() - t0) * 1000
 
 
 class Prime:
-    def __init__(self, generator: Chat, risk_sensor: Chat, policy: Policy, intervener: Chat | None = None):
-        # The Intervention step runs on the risk sensor's model by default (no extra GPU memory),
-        # with its own prompts.
-        self.gen, self.sensor, self.policy = generator, risk_sensor, policy
-        self.intervener = intervener or risk_sensor
+    def __init__(self, generator: Chat, sensor: RiskSensor, policy: Policy, intervener: Chat,
+                 intervention_retries: int = 1):
+        # The Intervention step runs on the risk sensor's model by default (no extra GPU memory).
+        self.gen, self.sensor, self.policy, self.intervener = generator, sensor, policy, intervener
+        self.intervention_retries = intervention_retries
 
     async def risk(self, prompt: str) -> Verdict:
-        """R + P."""
+        """R + P. Sensor failures become an errored Verdict (action None); bugs raise."""
         t0 = time.perf_counter()
         try:
-            cats = self.policy.categories or DEFAULT_CATEGORIES
-            text, _ = await self.sensor(RISK_SENSOR.format(
-                prompt=prompt, categories="\n".join(f"- {k}: {v}" for k, v in cats.items())))
-            p, err = parse_risk(text), None
-        except Exception as e:  # noqa: BLE001 - every failure is recorded, none hidden
-            p, err = {"score": None, "category": None, "reason": None, "intent": ""}, f"{type(e).__name__}: {e}"[:300]
-        action, rule, instruction = self.policy.decide(p["score"], p["category"])
-        return Verdict(action, p["score"], p["category"], p["reason"], p["intent"], err,
-                       (time.perf_counter() - t0) * 1000, rule, instruction)
+            sig: RiskSignal = await self.sensor.sense(prompt)
+        except SensorError as e:
+            return Verdict(None, None, None, None, None, None, f"{type(e).__name__}: {e}"[:300],
+                           e.error_type, (time.perf_counter() - t0) * 1000)
+        action, by, rule, instruction = self.policy.decide(sig.level, sig.category)
+        return Verdict(action, sig.level, sig.category, (sig.raw or {}).get("intent"), by, sig.raw,
+                       None, None, (time.perf_counter() - t0) * 1000, rule, instruction)
 
     async def _intervene(self, template: str, prompt: str, v: Verdict) -> str:
         instruction = f"\nPolicy instruction for this topic: {v.topic_instruction}" if v.topic_instruction else ""
-        text, _ = await self.intervener(template.format(
-            prompt=prompt, score=v.score, category=v.category or "Other", reason=v.reason or "",
-            intent=v.intent or "unclear", instruction=instruction))
-        text = text.strip()
-        if not text:
-            raise ValueError("empty intervention output")
-        return text
-
-    def _template_refusal(self, tr: Trace, v: Verdict, reason: str) -> None:
-        tr.action, tr.refusal_source, tr.fallback_reason = "REFUSE", "template", reason
-        tr.final_output = REFUSAL_TEMPLATES.get(v.category or "", GENERIC_REFUSAL)
+        content = template.format(
+            prompt=prompt, level=v.level, intent=v.intent or "unclear; infer it from the request",
+            category_note=f" (category: {v.category})" if v.category else "",
+            definition=self.policy.definition_text(v.category), instruction=instruction)
+        for attempt in range(self.intervention_retries + 1):
+            try:
+                text, _ = await self.intervener(content)
+            except Exception as e:  # noqa: BLE001 - only transient failures are handled
+                if not _is_transient(e):
+                    raise
+                if attempt == self.intervention_retries:
+                    raise InterventionError(f"{type(e).__name__}: {e}"[:200], "transient") from e
+                await asyncio.sleep(1.0)
+                continue
+            text = text.strip()
+            if text:
+                return text
+            if attempt == self.intervention_retries:
+                raise InterventionError("empty intervention output", "empty_output")
+        raise AssertionError("unreachable")
 
     async def run(self, prompt: str, condition: str, monitor=None, context: dict | None = None) -> Trace:
         """condition: 'none' (model alone) | 'prime' (model + PRIME). With a monitor (monitor.py),
@@ -309,6 +266,10 @@ class Prime:
             monitor.record_interaction(self, prompt, tr, context, started)
         return tr
 
+    def _error(self, tr: Trace, stage: str, error_type: str, message: str, fallback: str | None) -> None:
+        tr.action, tr.error_stage, tr.error_type, tr.fallback_action = "ERROR", stage, error_type, fallback
+        tr.errors.append(f"{stage}: {message}")
+
     async def _run(self, prompt: str, condition: str) -> Trace:
         tr = Trace(condition=condition)
         t_start = time.perf_counter()
@@ -318,32 +279,48 @@ class Prime:
             v = await self.risk(prompt)
             tr.risk, tr.risk_ms = asdict(v), v.latency_ms
             if v.error:
-                tr.errors.append(f"risk_sensor: {v.error}")
-            if v.action in ("REWRITE", "REFUSE"):
-                t0 = time.perf_counter()
-                try:
-                    if v.score is None:  # risk sensor failed and policy fails closed: nothing to write from
-                        raise ValueError("no risk verdict")
-                    text = await self._intervene(REWRITE_REQUEST if v.action == "REWRITE" else REFUSAL, prompt, v)
+                # Not a risk judgment: recorded as an error; the user gets the policy's fallback.
+                fb = self.policy.on_sensor_error
+                self._error(tr, "risk_sensor", v.error_type, v.error, fb)
+                if fb == "REFUSE":
+                    tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(None)
+                    tr.prime_ms = tr.total_ms = (time.perf_counter() - t_start) * 1000
+                    return tr
+            else:
+                tr.action = v.action
+                if v.action in ("REWRITE", "REFUSE"):
+                    t0 = time.perf_counter()
                     if v.action == "REWRITE":
-                        tr.action, tr.rewritten_request, to_model = "REWRITE", text, text
+                        try:
+                            text = await self._intervene(REWRITE_REQUEST, prompt, v)
+                            tr.rewritten_request = to_model = text
+                        except InterventionError as e:
+                            # The decision stands but couldn't be carried out: an error, with a safe fallback.
+                            self._error(tr, "intervention", e.error_type, str(e), "REFUSE")
+                            tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(v.category)
+                    elif self.policy.refusal == "generated":
+                        try:
+                            tr.final_output = await self._intervene(REFUSAL, prompt, v)
+                            tr.refusal_source = "generated"
+                        except InterventionError as e:
+                            # Still a correct REFUSE; only the wording degraded to the canned text.
+                            tr.errors.append(f"intervention: {e}")
+                            tr.refusal_source, tr.fallback_reason = "template", f"generated_refusal_failed: {e.error_type}"
+                            tr.final_output = self.policy.refusal_text(v.category)
                     else:
-                        tr.action, tr.refusal_source, tr.final_output = "REFUSE", "intervention", text
-                except Exception as e:  # noqa: BLE001
-                    reason = "risk_sensor_error" if v.score is None else f"intervention_failed: {type(e).__name__}: {e}"[:200]
-                    tr.errors.append(f"intervention: {reason}")
-                    self._template_refusal(tr, v, reason)  # fail closed, but still category-specific
-                tr.intervention_ms = (time.perf_counter() - t0) * 1000
+                        tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(v.category)
+                    tr.intervention_ms = (time.perf_counter() - t0) * 1000
             tr.prime_ms = tr.risk_ms + tr.intervention_ms
-            if tr.action == "REFUSE":
+            if tr.action == "REFUSE" or (tr.action == "ERROR" and tr.fallback_action == "REFUSE"):
                 tr.total_ms = (time.perf_counter() - t_start) * 1000
                 return tr
 
         try:
             out, gms = await self.gen(to_model)
         except Exception as e:  # noqa: BLE001
-            tr.errors.append(f"generator: {type(e).__name__}: {e}"[:300])
-            tr.action = "ERROR"
+            if not _is_transient(e):
+                raise
+            self._error(tr, "generator", "transient", f"{type(e).__name__}: {e}"[:300], None)
             tr.total_ms = (time.perf_counter() - t_start) * 1000
             return tr
         tr.raw_generation, tr.gen_ms, tr.final_output = out, gms, out

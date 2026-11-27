@@ -4,8 +4,14 @@ Tests whether PRIME catches unsafe content when the protected model lets it thro
 Everything runs on open models served locally with vLLM, so no provider safety filter
 blocks anything upstream and every block in the results is PRIME's own.
 
+> **Branch `feat/redesign-risk-sensor`:** the risk sensor returns a level (low / medium / high) and a
+> category instead of a 0-1 score, and the policy maps them to actions with a table. Refusals are canned per
+> category (no model call); REWRITE rewrites the request. Errors are recorded as errors, never as risk.
+> Design: `docs/RISK_SENSOR_REDESIGN.md`. Code: `risk.py`, `prime_local.py`, `config.yaml` (`policy`).
+> Tests: `python3 -m pytest tests`. Points 2 and 3 below describe the V1 branch.
+
 Lives alongside the original ADK agent in `../prime-guardrails/`, which is unchanged. Same
-P-R-I-M-E structure and policy (LOOSE thresholds 0.7 / 0.3), with these changes:
+P-R-I-M-E structure and policy (LOOSE thresholds 0.7 / 0.3 on V1), with these changes:
 1. **Intervention is code plus one LLM call, not a router LLM.** Policy is applied deterministically. Only
    REWRITE (rewrite the request) and REFUSE (contextual refusal) call the intervention LLM. At most two PRIME
    calls per request, the same as the original's risk sensor plus router.
@@ -19,9 +25,9 @@ Decisions and open questions: `docs/DECISIONS.md`. All design notes, plans and r
 
 ## Conditions (V1)
 - `none`: the protected model answers directly (baseline).
-- `prime`: PRIME's risk sensor LLM scores the request; the policy picks ALLOW (original request goes to the
-  model), REWRITE (the request is rewritten, and the model answers the rewrite) or REFUSE (PRIME writes a
-  contextual refusal, and the model isn't called). See `prime_local.py` and `docs/DECISIONS.md`.
+- `prime`: PRIME's risk sensor rates the request (level + category); the policy picks ALLOW (original request
+  goes to the model), REWRITE (the request is rewritten, and the model answers the rewrite) or REFUSE (the
+  category's canned refusal; the model isn't called). See `prime_local.py` and `docs/DECISIONS.md`.
 
 ## Datasets
 - **HarmBench** (200 standard behaviors, all unsafe): does harmful content reach the user?

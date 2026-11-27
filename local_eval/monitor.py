@@ -36,10 +36,13 @@ INTERACTION_SCHEMA = {
     "condition": "STRING", "dataset": "STRING", "dataset_id": "STRING", "dataset_label": "STRING",
     "dataset_category": "STRING", "original_request": "STRING",
     # R: risk
-    "risk_score": "FLOAT64", "risk_category": "STRING", "risk_reason": "STRING", "risk_intent": "STRING",
-    "risk_error": "STRING", "risk_model": "STRING",
-    # P: policy
-    "action": "STRING", "policy_mode": "STRING", "policy_hash": "STRING", "topic_rule": "STRING",
+    # risk_level replaces risk_score (risk sensor redesign); risk_score and risk_reason stay for older records.
+    "risk_level": "STRING", "risk_category": "STRING", "risk_intent": "STRING", "risk_raw": "STRING",
+    "risk_error": "STRING", "risk_error_type": "STRING", "risk_model": "STRING",
+    "risk_score": "FLOAT64", "risk_reason": "STRING",
+    # P: policy. action is ALLOW / REWRITE / REFUSE, or ERROR (then error_stage, error_type, fallback_action)
+    "action": "STRING", "decided_by": "STRING", "policy_mode": "STRING", "policy_hash": "STRING", "topic_rule": "STRING",
+    "error_stage": "STRING", "error_type": "STRING", "fallback_action": "STRING",
     # I: intervention
     "rewritten_request": "STRING", "refusal_source": "STRING", "fallback_reason": "STRING",
     "intervention_model": "STRING",
@@ -56,6 +59,7 @@ EVALUATION_SCHEMA = {
     "evaluator_model": "STRING", "winner": "STRING", "prime_was": "STRING", "identical": "BOOL",
     "prime_safety": "STRING", "prime_helpfulness": "INT64", "prime_label": "STRING",
     "model_safety": "STRING", "model_helpfulness": "INT64", "model_label": "STRING",
+    "prime_addresses_request": "STRING", "model_addresses_request": "STRING",
     "failure_mode": "STRING", "reason": "STRING", "evaluator_ms": "FLOAT64", "error": "STRING",
 }
 
@@ -97,8 +101,11 @@ def interaction_record(trace: dict, ctx: dict | None, *, prompt: str, run_id: st
     action = trace.get("action")
     if not prime and action != "ERROR":
         action = None                      # model alone: no policy decision was made
-    model_called = trace.get("action") != "REFUSE"
-    intervened = prime and trace.get("action") in ("REWRITE", "REFUSE")
+    model_called = not (trace.get("action") == "REFUSE"
+                        or (trace.get("action") == "ERROR" and trace.get("fallback_action") == "REFUSE"))
+    intervened = prime and (trace.get("rewritten_request") is not None
+                            or trace.get("refusal_source") == "generated"
+                            or trace.get("error_stage") == "intervention")
     return {
         "request_id": ctx.get("request_id") or str(uuid.uuid4()),
         "pair_id": ctx.get("pair_id"),
@@ -111,13 +118,20 @@ def interaction_record(trace: dict, ctx: dict | None, *, prompt: str, run_id: st
         "dataset_label": ctx.get("label"),
         "dataset_category": ctx.get("category"),
         "original_request": prompt,
-        "risk_score": risk.get("score"),
+        "risk_level": risk.get("level"),
         "risk_category": risk.get("category"),
-        "risk_reason": risk.get("reason"),
         "risk_intent": risk.get("intent") or None,
+        "risk_raw": json.dumps(risk["raw"], sort_keys=True) if risk.get("raw") is not None else None,
         "risk_error": risk.get("error"),
+        "risk_error_type": risk.get("error_type"),
         "risk_model": models.get("risk") if prime else None,
+        "risk_score": risk.get("score"),           # older records only
+        "risk_reason": risk.get("reason"),         # older records only
         "action": action,
+        "decided_by": risk.get("decided_by"),
+        "error_stage": trace.get("error_stage"),
+        "error_type": trace.get("error_type"),
+        "fallback_action": trace.get("fallback_action"),
         "policy_mode": (policy or {}).get("mode") if prime else None,
         "policy_hash": policy_hash(policy) if prime else None,
         "topic_rule": risk.get("topic_rule"),
@@ -160,6 +174,7 @@ def evaluation_record(result: dict, model_row: dict, prime_row: dict, *, run_id:
         "identical": result.get("identical"),
         "prime_safety": p.get("safety"), "prime_helpfulness": p.get("helpfulness"), "prime_label": p.get("label"),
         "model_safety": m.get("safety"), "model_helpfulness": m.get("helpfulness"), "model_label": m.get("label"),
+        "prime_addresses_request": p.get("addresses_request"), "model_addresses_request": m.get("addresses_request"),
         "failure_mode": result.get("failure_mode"),
         "reason": result.get("reason"),
         "evaluator_ms": result.get("evaluator_ms"),
@@ -168,9 +183,10 @@ def evaluation_record(result: dict, model_row: dict, prime_row: dict, *, run_id:
 
 
 def console_line(r: dict) -> str:
-    risk = "" if r["risk_score"] is None else r["risk_score"]
+    risk = r.get("risk_level") or ("" if r.get("risk_score") is None else r["risk_score"])
+    err = f" error={r['error_stage']}/{r['error_type']}->{r['fallback_action']}" if r.get("error_stage") else ""
     return (f"[M] {r['run_id']} {r['dataset'] or '-'}/{r['dataset_id'] or r['request_id'][:8]} {r['condition']} "
-            f"action={r['action'] or '-'} risk={risk} cat={r['risk_category'] or '-'} ms={round(r['total_ms'] or 0)}")
+            f"action={r['action'] or '-'} risk={risk} cat={r['risk_category'] or '-'}{err} ms={round(r['total_ms'] or 0)}")
 
 
 # ---------------------------------------------------------------- sinks
@@ -379,7 +395,8 @@ SELECT
   IF(ev.eval_id IS NULL, NULL, IF(i.condition = 'prime', ev.prime_label, ev.model_label) = 'over_refusal') AS is_over_refusal,
   IF(ev.eval_id IS NULL, NULL, ev.winner = IF(i.condition = 'prime', 'prime', 'model')) AS won,
   IF(i.condition = 'prime', 'model + PRIME', 'model alone') AS condition_name,
-  i.fallback_reason IS NOT NULL AS is_fallback
+  i.fallback_reason IS NOT NULL AS is_fallback,
+  i.action = 'ERROR' AS is_error
 FROM `{project}.{dataset}.interactions` i
 LEFT JOIN ev ON ev.pair_id = i.pair_id;""")
     return "\n\n".join(out) + "\n"

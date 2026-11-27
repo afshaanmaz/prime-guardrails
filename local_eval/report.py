@@ -56,15 +56,24 @@ def summarize(by: dict, ab: dict) -> list[dict]:
         pr = [by[i]["prime"] for i in ids]
         md = [by[i]["none"] for i in ids if "none" in by[i]]
         acts = Counter(t["action"] for t in pr)
-        refusals = [t for t in pr if t["action"] == "REFUSE"]
+        decided = [t for t in pr if t["action"] != "ERROR"]       # errors are not decisions: kept out of the rates
+        levels = Counter((t.get("risk") or {}).get("level") for t in decided)
+        refusals = [t for t in decided if t["action"] == "REFUSE"]
+        errs = [t for t in pr if t["action"] == "ERROR"]
         v = [ab[i] for i in ids if i in ab and "error" not in ab[i]]
         w = Counter(x["winner"] for x in v)
         row = {
-            "slice": sl, "n": len(ids),
-            "allow": pct(acts["ALLOW"], len(pr)), "rewrite": pct(acts["REWRITE"], len(pr)),
-            "refuse": pct(acts["REFUSE"], len(pr)),
-            "template_fallback": f"{sum(t['refusal_source'] == 'template' for t in refusals)}/{len(refusals)}",
-            "risk_sensor_errors": sum(any(e.startswith("risk_sensor") for e in t["errors"]) for t in pr),
+            "slice": sl, "n": len(ids), "decided": len(decided),
+            "allow": pct(acts["ALLOW"], len(decided)), "rewrite": pct(acts["REWRITE"], len(decided)),
+            "refuse": pct(acts["REFUSE"], len(decided)),
+            "level_l/m/h": f"{levels['low']}/{levels['medium']}/{levels['high']}",
+            "floor": sum((t.get("risk") or {}).get("decided_by") == "floor" for t in decided),
+            "topic_rule": sum((t.get("risk") or {}).get("decided_by") == "topic" for t in decided),
+            "generated_refusal_fallback": sum(t.get("fallback_reason") is not None for t in refusals),
+            "errors": len(errs),
+            "error_rate": pct(len(errs), len(pr)),
+            "error_types": ", ".join(f"{k}:{n}" for k, n in Counter(
+                f"{t.get('error_stage')}/{t.get('error_type')}" for t in errs).items()),
             "evaluated": len(v), "evaluator_errors": sum(1 for i in ids if i in ab and "error" in ab[i]),
         }
         if v:
@@ -77,6 +86,8 @@ def summarize(by: dict, ab: dict) -> list[dict]:
                 "helpful_model": round(sum(x["model"]["helpfulness"] for x in v) / len(v), 2),
                 "helpful_prime": round(sum(x["prime"]["helpfulness"] for x in v) / len(v), 2),
             })
+            rw = [x for x in v if by[x["id"]]["prime"]["action"] == "REWRITE" and "addresses_request" in x["prime"]]
+            row["rewrite_changed_question"] = f"{sum(x['prime']['addresses_request'] == 'no' for x in rw)}/{len(rw)}"
         row.update({"prime_ms_p50": quant([t["prime_ms"] for t in pr], .5), "prime_ms_p90": quant([t["prime_ms"] for t in pr], .9),
                     "total_ms_p50_model": quant([t["total_ms"] for t in md], .5),
                     "total_ms_p50_prime": quant([t["total_ms"] for t in pr], .5)})
@@ -92,25 +103,39 @@ def md_table(rows: list[dict], cols: list[str]) -> list[str]:
 
 def report(meta, by, ab, table) -> str:
     cfg, pol = meta["config"], meta["config"]["policy"]
-    th = pol["thresholds"][pol["mode"]]
-    L = [f"# PRIME run {meta['run_id']}", "",
-         f"- Protected model: `{cfg['generator']['model']}`; risk sensor + intervention LLM: `{cfg['risk_sensor']['model']}`",
-         f"- Policy {pol['mode']}: REFUSE if risk ≥ {th['high']}, REWRITE if ≥ {th['medium']}, else ALLOW",
+    if "actions" in pol:
+        t = pol["actions"][pol["mode"]]
+        pol_line = (f"- Policy {pol['mode']}: low → {t['low']}, medium → {t['medium']}, high → {t['high']}; "
+                    f"always refused at high: {', '.join(pol.get('always_refuse') or []) or 'none'}; "
+                    f"refusals: {pol.get('refusal', 'template')}; on risk sensor error: {pol.get('on_sensor_error')}")
+    else:   # runs made before the risk sensor redesign
+        th = pol["thresholds"][pol["mode"]]
+        pol_line = f"- Policy {pol['mode']}: REFUSE if risk ≥ {th['high']}, REWRITE if ≥ {th['medium']}, else ALLOW"
+    all_row = next(r for r in table if r["slice"] == "ALL")
+    flag = ([f"> **Unreliable run:** {all_row['error_rate']} of PRIME requests errored (limit 1%). "
+             f"Fix the errors before reading the results.", ""]
+            if all_row["n"] and all_row["errors"] / all_row["n"] > 0.01 else [])
+    L = [f"# PRIME run {meta['run_id']}", ""] + flag + [
+         f"- Protected model: `{cfg['generator']['model']}`; risk sensor + intervention LLM: `{cfg['risk_sensor']['model']}` "
+         f"({cfg['risk_sensor'].get('type', 'llm')} sensor)",
+         pol_line,
+         "- Action rates are over decided requests; errors (risk sensor, intervention or generator failures) are counted separately",
          f"- Evaluator LLM: `{cfg.get('evaluator', {}).get('model', 'n/a') if ab else 'not run'}` (blind, random A/B order)",
          f"- Code `{meta.get('commit')}`; {len(by)} requests × 2 conditions (model alone, model + PRIME)", "",
          "## What PRIME did", ""]
-    L += md_table(table, ["slice", "n", "allow", "rewrite", "refuse", "template_fallback", "risk_sensor_errors",
-                          "prime_ms_p50", "prime_ms_p90", "total_ms_p50_model", "total_ms_p50_prime"])
+    L += md_table(table, ["slice", "n", "decided", "allow", "rewrite", "refuse", "level_l/m/h", "floor", "topic_rule",
+                          "errors", "error_types", "prime_ms_p50", "prime_ms_p90", "total_ms_p50_model", "total_ms_p50_prime"])
     if ab:
         L += ["", "## Did PRIME beat the model alone? (evaluator LLM)", ""]
         L += md_table(table, ["slice", "evaluated", "prime_wins", "ties", "model_wins", "harmful_model", "harmful_prime",
-                              "over_refusal_model", "over_refusal_prime", "helpful_model", "helpful_prime", "evaluator_errors"])
+                              "over_refusal_model", "over_refusal_prime", "helpful_model", "helpful_prime",
+                              "rewrite_changed_question", "evaluator_errors"])
         v = [x for x in ab.values() if "error" not in x]
         acts = defaultdict(Counter)
         for x in v:
             acts[by[x["id"]]["prime"]["action"]][x["winner"]] += 1
         L += ["", "### Outcome by PRIME action", "", "| PRIME action | n | PRIME wins | ties | model wins |", "|---|---|---|---|---|"]
-        for a in ("ALLOW", "REWRITE", "REFUSE"):
+        for a in ("ALLOW", "REWRITE", "REFUSE", "ERROR"):
             c = acts[a]; n = sum(c.values())
             L.append(f"| {a} | {n} | {c['prime']} | {c['tie']} | {c['model']} |")
         prevented = sum(x["model"]["safety"] == "harmful" and x["prime"]["safety"] == "safe" for x in v)
@@ -137,7 +162,10 @@ def comparison(meta, by, ab) -> str:
             continue
         p, m = c["prime"], c.get("none", {})
         r = p.get("risk") or {}
-        prime = [f"**{p['action']}** (risk {r.get('score')}, {r.get('category')})"]
+        risk = r.get("level") or r.get("score")
+        prime = [f"**{p['action']}** (risk {risk}, {r.get('category')}{', by ' + r['decided_by'] if r.get('decided_by') else ''})"]
+        if p["action"] == "ERROR":
+            prime.append(f"*Error:* {p.get('error_stage')}/{p.get('error_type')}; user got {p.get('fallback_action')}")
         if p.get("rewritten_request"):
             prime.append(f"*Rewritten request:* {cell(p['rewritten_request'])}")
         if p["action"] == "REFUSE":
