@@ -11,6 +11,9 @@ SOURCES = {
     "harmbench": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/main/data/behavior_datasets/harmbench_behaviors_text_all.csv",
     # 450 prompts: 250 safe prompts that look risky, 200 unsafe contrasts
     "xstest": "https://raw.githubusercontent.com/paul-rottger/xstest/main/xstest_prompts.csv",
+    # OR-Bench-Hard-1K: prompts that sound harmful but mostly have a legitimate answer (borderline /
+    # dual-use); used to exercise the REWRITE tier. Labelled "borderline".
+    "orbench": "https://huggingface.co/datasets/bench-llm/or-bench/resolve/main/or-bench-hard-1k.csv",
 }
 
 
@@ -32,6 +35,11 @@ def load(name: str, limit: int | None = None, exclude: set | None = None) -> lis
     elif name == "xstest":
         items = [{"id": f"xstest-{r['id']}", "dataset": name, "prompt": r["prompt"],
                   "label": r["label"], "category": r["type"]} for r in rows]
+    elif name == "orbench":
+        key = next(k for k in rows[0] if k.strip().lower() in ("prompt", "text", "question"))
+        cat = next((k for k in rows[0] if k.strip().lower() == "category"), None)
+        items = [{"id": f"orbench-{n}", "dataset": name, "prompt": r[key], "label": "borderline",
+                  "category": (r[cat] if cat else "unknown")} for n, r in enumerate(rows)]
     else:
         raise ValueError(name)
     if exclude:  # e.g. the pilot's items, so evaluation runs don't reuse what we tuned on
