@@ -339,9 +339,12 @@ policy:
   topics: { ... }   # per-category overrides, as today
 ```
 
-Reading note: Afshaan's "high always refusing with a canned response" is read here as "the always-refuse
-categories, and high under Strict". If it meant high → REFUSE in both modes, LOOSE's `high` becomes REFUSE and
-the modes differ only in what's added later; to confirm.
+Why high → REWRITE under Loose (recommended, 26 Nov; Afshaan undecided): if high were refused in both modes,
+Strict and Loose would be identical, since medium → REWRITE in both. Rewriting high-risk requests outside the
+floor categories is what the industry now calls a safe completion (e.g. "write a phishing email" → "how do I
+spot phishing emails"). The floor stops laundering where it matters most, and the laundering check (5.9)
+measures it everywhere else. The offline policy re-application (E4) shows both variants on the same logged
+levels, so the choice can be revisited from data.
 
 ### 5.9 One definition of harm across P, R and I
 
