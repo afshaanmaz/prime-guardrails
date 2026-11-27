@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow"><title>PRIME experiments</title>
+<style>
+:root{--bg:#fafaf9;--card:#fff;--ink:#1c1917;--mute:#78716c;--line:#e7e5e4;--acc:#1d4ed8;--chip:#f5f5f4}
+@media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--card:#1c1917;--ink:#f5f5f4;--mute:#a8a29e;--line:#292524;--acc:#93c5fd;--chip:#292524}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:920px;margin:0 auto;padding:24px 16px 48px}h1{font-size:22px;margin:0}
+.sub{color:var(--mute);font-size:13px;margin:4px 0 20px}a{color:var(--acc)}code{font-size:12.5px}
+.run{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.head h2{margin:0;font-size:18px}
+.when{color:var(--mute);font-size:13px}.meta{color:var(--mute);font-size:12.5px;margin:4px 0 8px}
+.run p{margin:6px 0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:12px 0}
+.stats div{background:var(--chip);border-radius:8px;padding:8px;font-size:12px;color:var(--mute)}
+.stats span{display:block;font-size:18px;font-weight:650;color:var(--ink)}
+.links{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13.5px}
+.btn{background:var(--ink);color:var(--bg);padding:6px 12px;border-radius:8px;text-decoration:none;font-weight:600}
+</style></head><body><div class="wrap">
+<h1>PRIME experiments</h1>
+<div class="sub">Zephyr-7B alone vs Zephyr + PRIME, scored by a blind evaluator (Llama 4 Maverick). Newest first. Updated Fri 27 Nov 2026, 11:28 AM PST.
+Plan and decisions: <a href="https://github.com/afshaanmaz/prime-guardrails/blob/eval/prime-v1/local_eval/docs/EXPERIMENTATION_PLAN.md">EXPERIMENTATION_PLAN.md</a>.
+Side-by-side pages include harmful model outputs.</div>
+
+<article class="run">
+  <div class="head"><h2>M0c</h2><span class="when">Thu 26 Nov 2026, 11:18 PM PST</span></div>
+  <div class="meta">run <code>20261127-071825</code> · branch <a href="https://github.com/afshaanmaz/prime-guardrails/tree/feat/redesign-risk-sensor"><code>feat/redesign-risk-sensor</code></a>
+   · commit <a href="https://github.com/afshaanmaz/prime-guardrails/commit/01a70b6"><code>01a70b6</code></a> · 90 requests (harmbench, orbench, xstest)</div>
+  <p><b>What changed in the code.</b> Risk sensor redesign: returns a level (low / medium / high) and a category instead of a 0-1 score; the policy maps level to action with a table (STRICT); per-category unsafe / borderline / safe definitions; always-refuse floor; canned template refusals instead of generated ones; sensor errors kept separate from risk; guided JSON decoding.</p>
+  <p><b>What we found.</b> REWRITE is back (25 of 50 OR-Bench). But 7/17 harmless XSTest prompts refused, template refusals lose to Zephyr&#x27;s own, and the sensor took ~100 s per call (guided JSON).</p>
+  <div class="stats">
+    <div><span>38 / 11 / 41</span>PRIME / tie / model alone preferred</div>
+    <div><span>30 → 2</span>harmful answers, model alone → PRIME</div>
+    <div><span>7 / 17</span>harmless XSTest prompts refused (5 rewritten)</div>
+    <div><span>31</span>REWRITEs</div>
+    <div><span>99.5 s</span>median risk sensor time</div>
+  </div>
+  <div class="links"><a class="btn" href="20261127-071825.html">Side by side →</a>
+    <a href="https://github.com/afshaanmaz/prime-guardrails/tree/feat/redesign-risk-sensor/local_eval/results/20261127-071825/REPORT.md">Report</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/feat/redesign-risk-sensor/local_eval/results/20261127-071825/COMPARISON.md">All rows (markdown)</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/feat/redesign-risk-sensor/local_eval/results/20261127-071825">Raw files</a></div>
+</article>
+
+<article class="run">
+  <div class="head"><h2>M0b</h2><span class="when">Thu 26 Nov 2026, 8:08 PM PST</span></div>
+  <div class="meta">run <code>20261127-040815</code> · branch <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1"><code>eval/prime-v1</code></a>
+   · commit <a href="https://github.com/afshaanmaz/prime-guardrails/commit/61e1a73"><code>61e1a73</code></a> · 90 requests (harmbench, orbench, xstest)</div>
+  <p><b>What changed in the code.</b> Concrete LOW / MEDIUM / HIGH bands for the 0-1 score, with two questions before scoring (D16). Adds 50 OR-Bench-Hard borderline prompts (90 requests).</p>
+  <p><b>What we found.</b> REWRITE still missing (1 of 90). More harmless XSTest prompts refused (10/17). PRIME&#x27;s generated refusals beat Zephyr&#x27;s own on blunt harmful requests.</p>
+  <div class="stats">
+    <div><span>48 / 18 / 24</span>PRIME / tie / model alone preferred</div>
+    <div><span>40 → 0</span>harmful answers, model alone → PRIME</div>
+    <div><span>10 / 17</span>harmless XSTest prompts refused (0 rewritten)</div>
+    <div><span>1</span>REWRITEs</div>
+    <div><span>3.3 s</span>median risk sensor time</div>
+  </div>
+  <div class="links"><a class="btn" href="20261127-040815.html">Side by side →</a>
+    <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-040815/REPORT.md">Report</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-040815/COMPARISON.md">All rows (markdown)</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-040815">Raw files</a></div>
+</article>
+
+<article class="run">
+  <div class="head"><h2>M0</h2><span class="when">Thu 26 Nov 2026, 7:42 PM PST</span></div>
+  <div class="meta">run <code>20261127-034213</code> · branch <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1"><code>eval/prime-v1</code></a>
+   · commit <a href="https://github.com/afshaanmaz/prime-guardrails/commit/76c3b78"><code>76c3b78</code></a> · 40 requests (harmbench, xstest)</div>
+  <p><b>What changed in the code.</b> Risk sensor told to score intent, not alarming words, against the policy&#x27;s category definitions (D14). Refusal prompt v2: longer, varied, gives real help, supportive on self-harm, no empty offers (D12). Same 40 pilot requests as the V1 pilot.</p>
+  <p><b>What we found.</b> Clear improvement on the pilot: harmless prompts flagged fell from 11/17 to 3/17. But REWRITE vanished (0 of 40): scores went to 0.0 or 0.8-0.9.</p>
+  <div class="stats">
+    <div><span>16 / 16 / 8</span>PRIME / tie / model alone preferred</div>
+    <div><span>10 → 0</span>harmful answers, model alone → PRIME</div>
+    <div><span>3 / 17</span>harmless XSTest prompts refused (0 rewritten)</div>
+    <div><span>0</span>REWRITEs</div>
+    <div><span>2.8 s</span>median risk sensor time</div>
+  </div>
+  <div class="links"><a class="btn" href="20261127-034213.html">Side by side →</a>
+    <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-034213/REPORT.md">Report</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-034213/COMPARISON.md">All rows (markdown)</a> <a href="https://github.com/afshaanmaz/prime-guardrails/tree/eval/prime-v1/local_eval/results/20261127-034213">Raw files</a></div>
+</article>
+</div></body></html>
