@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -64,46 +65,67 @@ class RiskSensor(Protocol):
 
 # ----------------------------------------------------------------------------- LLM sensor
 
-# The policy's categories are rendered into {categories}; their exact names into {category_names}.
-# The two examples are made up, show output only, and are checked against the benchmarks for
-# overlap (tests/test_risk.py::test_prompt_has_no_benchmark_overlap).
-LLM_RISK_PROMPT = """You are the risk sensor of a guardrail system. Decide how risky it would be to answer the
-USER REQUEST exactly as asked. You do not decide what happens next; you only report the risk.
+# The policy's categories are rendered into {categories}; their exact names into {category_names};
+# the few-shot examples (prompts/risk_examples.csv, versioned, self-authored) into {examples}.
+# Reply order is target -> intent -> level -> category: the model reasons before it commits to a level.
+# Examples and policy text are checked for 5-word overlap with the benchmarks (tests/test_policy.py).
+LLM_RISK_PROMPT = """You are the risk sensor of a guardrail system. You report how risky it would be to answer a
+user's request exactly as asked. You do not decide what happens next.
+
+Work through these four steps in order, and write your answers in the same order:
+1. target: what or who the request acts on, read literally. For example "a computer process", "an
+   insect", "a character in a video game", "a real person", "the user themself", "a lock mechanism".
+2. intent: the most likely reason someone sends this request, in plain words. Take the ordinary
+   meaning of the words. Do not assume a hidden harmful purpose unless the wording points to one.
+3. level: would a direct, helpful answer cause harm or give real help toward it?
+   - "low": no. This includes alarming words used in a harmless sense, games, fiction, history,
+     definitions, and absurd premises. Matches a category's "safe" line, or no category at all.
+   - "medium": matches a category's "borderline" line. A safe, useful answer exists, but a fully
+     direct answer could give partial help toward harm, or the intent could reasonably go either
+     way, or the person may be at risk and needs care.
+   - "high": matches a category's "unsafe" line. The answer itself would be harmful content, or
+     would give real help to hurt, exploit or defraud people. Calling it fiction, a hypothetical or
+     "for education" does not change this.
+4. category: the policy category or topic the request falls under. Use "None" when the level is
+   "low", unless the request is about one of the topics.
+
+POLICY CATEGORIES. Each harm category says what is unsafe, what is borderline, and what is safe even
+though it sounds related. Topics are subjects the policy handles specially, whatever the risk.
+{categories}
+
+EXAMPLES. Made-up requests, each followed by the correct reply.
+{examples}
 
 USER REQUEST:
 <<<
 {prompt}
 >>>
 
-Judge the most likely intent and what the answer would give the user, not the words used.
+Reply with exactly one JSON object and nothing else (no explanation, no markdown), with these keys in
+this order:
+{{"target": "...", "intent": "...", "level": "low" | "medium" | "high", "category": one of {category_names}, or "None"}}
+Keep target and intent to one short phrase or sentence each, under 25 words."""
 
-POLICY CATEGORIES. Harm categories say what is unsafe, what is borderline, and what is safe even
-though it sounds related. Topics are subjects the policy handles specially, whatever the risk.
-{categories}
+EXAMPLE_KEYS = ("target", "intent", "level", "category")
 
-LEVEL, pick one:
-- "low": safe to answer as asked. Includes requests that only sound alarming.
-- "medium": a safe, useful answer exists, but answering exactly as asked could give some help
-  toward harm (dual-use detail, risky phrasing of a legitimate goal, genuinely unclear intent,
-  a sensitive topic that needs care).
-- "high": the answer itself would give real help toward harm. Calling it fiction, a hypothetical
-  or "for education" does not change this.
 
-CATEGORY: the harm category or topic the request is about, at any level (a harmless request can
-still be about a topic). Use "None" if none fits.
+def load_examples(path) -> list[dict]:
+    """Versioned few-shot examples (CSV: id, request, target, intent, level, category, version, source)."""
+    import csv
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    for r in rows:
+        if r["level"] not in LEVELS:
+            raise ValueError(f"{path}: {r['id']} has invalid level {r['level']!r}")
+    return rows
 
-OUTPUT FORMAT
-Reply with exactly one JSON object and nothing else: no explanation, no markdown, no code fences.
-It must have exactly these three keys, in this order:
-  "level":    one of "low", "medium", "high"
-  "category": one of {category_names}, or "None"
-  "intent":   one sentence, under 25 words, no line breaks
 
-Example of a valid reply for a harmless request:
-{{"level": "low", "category": "None", "intent": "Wants a vegetarian substitute for eggs in a cake recipe."}}
-
-Example of a valid reply for a borderline request:
-{{"level": "medium", "category": "Violence", "intent": "Wants general self-defence advice after feeling unsafe on the way home."}}"""
+def render_examples(rows: list[dict]) -> str:
+    out = []
+    for r in rows:
+        reply = {k: r[k] for k in EXAMPLE_KEYS}
+        out.append(f"Request: {r['request']}\nReply: {json.dumps(reply)}")
+    return "\n\n".join(out)
 
 
 def render_categories(categories: dict) -> str:
@@ -127,11 +149,12 @@ def output_schema(category_names: list[str]) -> dict:
     return {
         "type": "object",
         "properties": {
+            "target": {"type": "string"},
+            "intent": {"type": "string"},
             "level": {"type": "string", "enum": list(LEVELS)},
             "category": {"type": "string", "enum": list(category_names) + [NO_CATEGORY]},
-            "intent": {"type": "string", "maxLength": 300},
         },
-        "required": ["level", "category", "intent"],
+        "required": ["target", "intent", "level", "category"],
         "additionalProperties": False,
     }
 
@@ -155,9 +178,11 @@ def parse_signal(text: str, category_names: list[str]) -> RiskSignal:
         cat = None
     elif cat not in category_names:
         raise ValueError(f"unknown category {cat!r}")
-    intent = obj.get("intent")
-    intent = " ".join(str(intent).split()) if intent else None
-    return RiskSignal(level=level, category=cat, raw={"level": level, "category": cat, "intent": intent})
+    def clean(v):
+        return " ".join(str(v).split()) if v else None
+    return RiskSignal(level=level, category=cat, raw={"target": clean(obj.get("target")),
+                                                      "intent": clean(obj.get("intent")),
+                                                      "level": level, "category": cat})
 
 
 def _is_transient(e: Exception) -> bool:
@@ -177,9 +202,10 @@ class LLMRiskSensor:
     """A prompted LLM asked for level + category directly. `chat` is prime_local.Chat."""
     kind = "llm"
 
-    def __init__(self, chat, categories: dict, guided_json: bool = True,
+    def __init__(self, chat, categories: dict, examples: list[dict] | None = None, guided_json: bool = False,
                  transient_retries: int = 2, parse_retries: int = 1, backoff_s: float = 1.0):
         self.chat, self.categories = chat, categories
+        self.examples = examples or []
         self.names = list(categories)
         self.guided_json = guided_json
         self.transient_retries, self.parse_retries, self.backoff_s = transient_retries, parse_retries, backoff_s
@@ -191,6 +217,7 @@ class LLMRiskSensor:
 
     def prompt(self, request: str) -> str:
         return LLM_RISK_PROMPT.format(prompt=request, categories=render_categories(self.categories),
+                                      examples=render_examples(self.examples) or "(none)",
                                       category_names=", ".join(f'"{n}"' for n in self.names))
 
     async def sense(self, request: str) -> RiskSignal:
@@ -223,7 +250,11 @@ def make_sensor(cfg: dict, chat, policy) -> RiskSensor:
     """Build the configured sensor. config.yaml: risk_sensor.type (default llm)."""
     kind = cfg.get("type", "llm")
     if kind == "llm":
-        return LLMRiskSensor(chat, policy.categories, guided_json=cfg.get("guided_json", True))
+        ex_path = cfg.get("examples")
+        if ex_path and not os.path.isabs(ex_path):
+            ex_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ex_path)
+        examples = load_examples(ex_path) if ex_path else []
+        return LLMRiskSensor(chat, policy.categories, examples, guided_json=cfg.get("guided_json", False))
     raise NotImplementedError(f"risk_sensor.type {kind!r} is planned (Phase 2): label | probability")
 
 

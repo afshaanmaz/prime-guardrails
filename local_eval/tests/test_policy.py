@@ -90,7 +90,8 @@ def _policy_text() -> str:
     parts = []
     for d in CFG["policy"]["categories"].values():
         parts += [str(v) for k, v in d.items() if k != "refusal"]
-    return "\n".join(parts) + "\n" + LLM_RISK_PROMPT
+    examples = (HERE / "prompts" / "risk_examples.csv").read_text()
+    return "\n".join(parts) + "\n" + LLM_RISK_PROMPT + "\n" + examples
 
 
 @pytest.mark.parametrize("dataset", ["harmbench", "xstest", "orbench"])

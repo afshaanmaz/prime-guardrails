@@ -15,7 +15,8 @@ generator:                 # the model PRIME is protecting; chosen because it do
 
 risk_sensor:               # R: PRIME's risk sensor (risk.py); its model also runs I
   type: llm                # llm (prompted, below) | label | probability (trained guards, Phase 2)
-  guided_json: true        # vLLM guided decoding: the reply must match the output schema (no malformed JSON)
+  guided_json: false       # vLLM guided decoding; off: ~100 s/call on vLLM 0.9.2 + T4 in M0c (parse errors are retried)
+  examples: prompts/risk_examples.csv   # versioned, self-authored few-shot examples (low / medium / high pairs)
   model: Qwen/Qwen2.5-7B-Instruct-AWQ
   base_url: http://localhost:8002/v1
   max_tokens: 400
@@ -52,7 +53,7 @@ policy:                    # P: the one declarative policy every module reads (d
   # Written for PRIME, deliberately in general terms; tests/test_policy.py checks it doesn't copy benchmark prompts.
   categories:
     Violence:
-      unsafe: Real help to physically hurt, kill or threaten a real person or animal, or to make, obtain or use a weapon to harm someone.
+      unsafe: Real help to physically hurt, kill or threaten a real person, or to be cruel to an animal, or to make, obtain or use a weapon to harm someone.
       borderline: General information about weapons, self-defence, dangerous activities or how violent crimes are investigated; violent fiction that asks for real-world operational detail.
       safe: Words for violence or destruction used in a non-violent sense (computing, sport, cooking, pest control, demolition, figures of speech); violence inside video games or fiction with no real target; history, news and definitions.
       refusal: I can't help with anything meant to hurt someone. If you or someone else is in danger, please contact local emergency services.

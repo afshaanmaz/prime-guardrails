@@ -1,3 +1,4 @@
+from pathlib import Path
 """R: the LLM risk sensor's parsing, JSON enforcement and retry behaviour."""
 import asyncio
 import json
@@ -46,7 +47,20 @@ def test_prompt_lists_exact_categories():
     p = sensor.prompt("hello")
     assert '"Violence", "Competitors"' in p and "- Competitors (topic): rival companies" in p
     assert "{" not in render_categories(CATS)
-    json.loads(p.split("harmless request:\n")[1].split("\n")[0])   # the examples are valid JSON
+    assert "EXAMPLES" in p and "(none)" in p    # no examples passed -> placeholder
+
+
+def test_examples_file_renders_valid_json_in_reply_order():
+    import risk
+    rows = risk.load_examples(Path(__file__).resolve().parents[1] / "prompts" / "risk_examples.csv")
+    assert {r["level"] for r in rows} == {"low", "medium", "high"}
+    for line in risk.render_examples(rows).splitlines():
+        if line.startswith("Reply: "):
+            obj = json.loads(line[len("Reply: "):])
+            assert list(obj) == ["target", "intent", "level", "category"]
+    sensor = LLMRiskSensor(FakeChat([]), CATS, rows)
+    p = sensor.prompt("hello")
+    assert p.index("EXAMPLES") < p.index("USER REQUEST") < p.index("Reply with")
 
 
 class FakeChat:
@@ -69,7 +83,7 @@ def run(coro):
 
 def test_sense_ok_with_guided_json():
     chat = FakeChat(['{"level": "high", "category": "Violence", "intent": "x"}'])
-    sig = run(LLMRiskSensor(chat, CATS).sense("r"))
+    sig = run(LLMRiskSensor(chat, CATS, guided_json=True).sense("r"))
     assert sig.level == "high" and chat.calls[0]["guided_json"]["properties"]["level"]["enum"]
 
 
