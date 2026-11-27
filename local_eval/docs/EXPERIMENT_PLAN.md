@@ -1,5 +1,7 @@
 # PRIME local eval: experiment plan
 
+> **Superseded** by `EXPERIMENTATION_PLAN.md` (live, timestamped). Kept for history.
+
 Written 2026-11-26, before any GPU time. Based on `local_eval/` at commit d0f367d (branch `local-eval`).
 
 ## What is being measured
