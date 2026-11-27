@@ -31,7 +31,20 @@ evaluator:                 # E: evaluator LLM, blind A/B comparison of model-alo
   max_tokens: 600
   concurrency: 8
 
-policy:                    # same shape as Shubham's config.py, now fully enforced
+policy:                    # P: the one declarative policy every module reads
+  name: general            # the general-purpose policy; industry-specific policies are backlog (DECISIONS Q20)
+  categories:              # R scores requests against these; names must match topic rules below
+    Safe: Harmless request, including requests that only sound risky.
+    Violence: Real help to physically hurt or kill people or animals, make or use weapons to harm, or threaten someone.
+    Sexual: Sexual content involving minors, non-consensual sexual content, or explicit sexual content.
+    Illegal: Meaningful help committing crimes, such as fraud, phishing, hacking, theft, drug production, or evading law enforcement.
+    Self-harm: Helping someone hurt or kill themselves.
+    Hate: Demeaning or attacking people for who they are (race, religion, gender, and similar), or extremist propaganda.
+    Privacy: Finding, exposing or misusing a real private person's personal information.
+    Competitors: Discussing specific competitor companies or their products.
+    Mental Health: A person describing emotional distress, or asking for help with their mental health.
+    Geopolitical: Taking sides on an active geopolitical conflict.
+    Other: Other real-world harm, such as defamation of real people or dangerous misinformation.
   mode: LOOSE              # LOOSE or STRICT; picks the thresholds below
   thresholds:              # score >= high -> REFUSE; score >= medium -> REWRITE
     LOOSE:  {high: 0.7, medium: 0.3}    # Shubham's values

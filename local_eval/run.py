@@ -42,6 +42,7 @@ async def main(args):
     )
     limit = args.limit or cfg["run"]["limit"]
     sizes = dict(kv.split("=") for kv in (args.sizes or []))
+    exclude = {json.loads(l)["id"] for d in (args.exclude or []) for l in open(Path(d) / "traces.jsonl")}
     run_id = time.strftime("%Y%m%d-%H%M%S") + ("-mock" if args.mock else "")
     out = Path("results") / run_id
     out.mkdir(parents=True)
@@ -56,7 +57,7 @@ async def main(args):
     n = 0
     with open(out / "traces.jsonl", "w") as f:
         for ds in list(sizes) or args.datasets or cfg["run"]["datasets"]:
-            items = data.load(ds, int(sizes[ds]) if ds in sizes else limit)
+            items = data.load(ds, int(sizes[ds]) if ds in sizes else limit, exclude)
             for cond in CONDITIONS:
                 t0 = time.time()
                 ctxs = [request_context(run_id, it) for it in items]
@@ -81,4 +82,5 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int)
     ap.add_argument("--datasets", nargs="+", help="override run.datasets, e.g. --datasets harmbench")
     ap.add_argument("--sizes", nargs="+", metavar="DATASET=N", help="per-dataset sizes; implies --datasets")
+    ap.add_argument("--exclude", nargs="+", metavar="RUN_DIR", help="skip requests used in these runs (e.g. the pilot)")
     asyncio.run(main(ap.parse_args()))

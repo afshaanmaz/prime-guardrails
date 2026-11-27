@@ -22,7 +22,7 @@ def _fetch(name: str) -> Path:
     return path
 
 
-def load(name: str, limit: int | None = None) -> list[dict]:
+def load(name: str, limit: int | None = None, exclude: set | None = None) -> list[dict]:
     """Rows of {id, dataset, prompt, label, category}. label: 'unsafe' or 'safe'."""
     rows = list(csv.DictReader(open(_fetch(name), encoding="utf-8")))
     if name == "harmbench":
@@ -34,6 +34,8 @@ def load(name: str, limit: int | None = None) -> list[dict]:
                   "label": r["label"], "category": r["type"]} for r in rows]
     else:
         raise ValueError(name)
+    if exclude:  # e.g. the pilot's items, so evaluation runs don't reuse what we tuned on
+        items = [it for it in items if it["id"] not in exclude]
     return _spread(items, limit) if limit else items
 
 
