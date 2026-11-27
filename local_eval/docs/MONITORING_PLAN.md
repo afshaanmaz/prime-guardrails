@@ -50,7 +50,7 @@ request. Add a shared `pair_id` (= dataset item id + run_id) on interaction reco
 
 ### 4. Storage: BigQuery over the bucket files
 - BigQuery dataset `prime_monitoring` in `afshaan-trial-1` (location US).
-- External tables `interactions` and `evaluations` over `gs://afshaan-trial-1-prime-results/monitoring/<table>/*`
+- External tables `interactions` and `evaluations` over `gs://afshaan-trial-1-prime-../results/monitoring/<table>/*`
   (newline-delimited JSON, explicit schema, Hive partitioning on `dt` if straightforward). No load jobs,
   and nothing extra is needed on the VM, which only has storage write access.
 - View `interactions_with_eval`: interactions joined to evaluations on `request_id`/`pair_id`.
@@ -65,9 +65,9 @@ request. Add a shared `pair_id` (= dataset item id + run_id) on interaction reco
 - `report.py` stays as the per-run snapshot.
 
 ### 6. Backfill
-A one-off script `local_eval/infra/backfill_monitoring.py` that converts existing runs (`results/*/traces.jsonl`
+A one-off script `local_eval/infra/backfill_monitoring.py` that converts existing runs (`../results/*/traces.jsonl`
 and `evaluator.jsonl`) into interaction and evaluation records and uploads them, so the dashboard isn't empty
-(at least the V1 pilot `results/20261126-104223`).
+(at least the V1 pilot `../results/20261126-104223`).
 
 ## Out of scope (decisions ledger)
 Alert thresholds; retention and redaction of user prompts in logs; drift detection on risk scores; production

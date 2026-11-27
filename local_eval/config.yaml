@@ -48,7 +48,7 @@ policy:                    # same shape as Shubham's config.py, now fully enforc
       action: REFUSE
       instruction: Decline to comment on active geopolitical conflicts.
 
-monitoring:                # M: one record per interaction, batched to the bucket; BigQuery reads it (MONITORING.md)
+monitoring:                # M: one record per interaction, batched to the bucket; BigQuery reads it (docs/MONITORING.md)
   enabled: true
   sink: gcs                # gcs or local. Mock runs write locally unless PRIME_MONITOR_SINK=gcs
   gcs_prefix: gs://afshaan-trial-1-prime-results/monitoring

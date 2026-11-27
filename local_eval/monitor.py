@@ -7,7 +7,7 @@ and `request_id`. Records are buffered and written as new JSONL files (never rew
   gs://<bucket>/monitoring/<table>/dt=YYYY-MM-DD/<run_id>-<tag>-<seq>.jsonl     (sink: gcs)
   <local_dir>/<table>/dt=YYYY-MM-DD/<run_id>-<tag>-<seq>.jsonl                  (sink: local)
 
-BigQuery reads those files as external tables (infra/setup-monitoring.sh). See MONITORING.md.
+BigQuery reads those files as external tables (infra/setup-monitoring.sh). See docs/MONITORING.md.
 
   python monitor.py ddl     # print the BigQuery DDL (dataset, tables, view) built from the schemas below
 """

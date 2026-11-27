@@ -15,13 +15,13 @@ P-R-I-M-E structure and policy (LOOSE thresholds 0.7 / 0.3), with these changes:
 4. **Errors counted separately**, and **per-request latency** for every model call (the original's
    sub-second figure was throughput at 50 parallel threads).
 
-Decisions and open questions: `DECISIONS.md`.
+Decisions and open questions: `docs/DECISIONS.md`. All design notes, plans and reviews are in `docs/`.
 
 ## Conditions (V1)
 - `none`: the protected model answers directly (baseline).
 - `prime`: PRIME's risk sensor LLM scores the request; the policy picks ALLOW (original request goes to the
   model), REWRITE (the request is rewritten, and the model answers the rewrite) or REFUSE (PRIME writes a
-  contextual refusal, and the model isn't called). See `prime_local.py` and `DECISIONS.md`.
+  contextual refusal, and the model isn't called). See `prime_local.py` and `docs/DECISIONS.md`.
 
 ## Datasets
 - **HarmBench** (200 standard behaviors, all unsafe): does harmful content reach the user?
@@ -30,7 +30,7 @@ SafetyBench (the original eval) is multiple-choice safety knowledge with no answ
 in the test file, so it can't measure this.
 
 ## Run on the VM
-VM setup is in `infra/` (`setup-prime-lab.sh`, then `vm-steps.md`).
+VM setup is in `infra/` (`setup-prime-lab.sh`, then `docs/vm-steps.md`).
 ```bash
 cd local_eval
 python3 -m pip install -r requirements.txt
@@ -50,7 +50,7 @@ risk verdict, action, rewritten request or refusal, output, per-step timing), `e
 ## Monitoring
 Every request (and the model-alone baseline) is recorded end to end and batched to
 `gs://afshaan-trial-1-prime-results/monitoring/`; BigQuery (`prime_monitoring`) reads it, and a Looker Studio
-dashboard charts it over time. What's recorded, how to query it and the dashboard link: `MONITORING.md`.
+dashboard charts it over time. What's recorded, how to query it and the dashboard link: `docs/MONITORING.md`.
 
 ## Metrics (REPORT.md)
 - PRIME's action mix (ALLOW / REWRITE / REFUSE) per slice, template fallback rate, risk sensor errors.
@@ -63,4 +63,4 @@ dashboard charts it over time. What's recorded, how to query it and the dashboar
   its own (16 of 20 in the first T4 run), so there's something for PRIME to catch.
 - **Risk sensor LLM (R) and intervention LLM (I):** Qwen2.5-7B-Instruct (AWQ), a different family from the protected model.
 - **Evaluator LLM (E):** Llama 4 Maverick on Vertex AI's managed API (`evaluator` in config.yaml). A different family from both, and no Llama Guard filter in front of it.
-- Everything else that's open is tracked in `DECISIONS.md`.
+- Everything else that's open is tracked in `docs/DECISIONS.md`.

@@ -12,7 +12,7 @@ Story: `NARRATIVE.md`. Baselines and benchmarks: `RELATED_WORK.md`.
 | RQ3 | Is steering better than block-or-allow? | Model + PRIME vs model + guard classifier with a stock refusal |
 | RQ4 | Does PRIME add value beyond just using a safer model? (DECISIONS Q1) | Weak model + PRIME vs strong model alone; strong model + PRIME |
 | RQ5 | Which components matter? | Ablations (below) |
-| RQ6 | Is the latency and cost acceptable? | `LATENCY.md` (branch `eval/latency-benchmark`) |
+| RQ6 | Is the latency and cost acceptable? | `LATENCY.md` |
 | RQ7 | Does the policy really configure behaviour? | Topic rules on/off, STRICT vs LOOSE |
 | (RQ8) | Does it extend to image generation? | Separate branch `eval/image-exploration` |
 

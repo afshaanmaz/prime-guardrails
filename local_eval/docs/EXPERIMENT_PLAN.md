@@ -63,7 +63,7 @@ is left idle, so keep the servers running or move straight on to the next step.
 ## What gets saved in the repo
 For each run, `local_eval/results/<run_id>/` holds `meta.json`, `traces.jsonl`, `graded.jsonl`, `summary.json` and
 `summary.md`. `logs/` is gitignored, so copy `logs/*.log` (the vLLM server logs) and the stdout of
-run.py and grade.py into `results/<run_id>/logs/` before committing. Commit to a working branch,
+run.py and grade.py into `../results/<run_id>/logs/` before committing. Commit to a working branch,
 not `main`.
 
 ## Caveats to report with the results

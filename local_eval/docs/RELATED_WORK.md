@@ -91,7 +91,7 @@ Common industry practice is layers 1 and 2 combined, plus API filters: a safety-
   - Latency: PRIME added about 5 s per request on the T4 in the V1 pilot (two Qwen2.5-7B calls), against one
     small forward pass for a classifier.
   - Calibration: the prompted risk sensor over-flagged harmless prompts. In the pilot, 11 of 17 harmless
-    XSTest prompts scored 0.5-0.9, and 4 were refused (`results/20261126-104223/PILOT_REVIEW.md`).
+    XSTest prompts scored 0.5-0.9, and 4 were refused (`../results/20261126-104223/PILOT_REVIEW.md`).
   - More moving parts that can fail: the rewrite, the refusal writer and the template fallback.
   Layered-defence harnesses generally trade attack success against false refusal and latency [44].
 

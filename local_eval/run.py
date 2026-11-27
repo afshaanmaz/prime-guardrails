@@ -51,7 +51,7 @@ async def main(args):
         commit = ""
     meta = {"run_id": run_id, "mock": args.mock, "commit": commit, "config": cfg,
             "conditions": CONDITIONS, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-    monitor = Monitor.from_config(cfg, run_id, mock=args.mock)   # M: interaction records (MONITORING.md)
+    monitor = Monitor.from_config(cfg, run_id, mock=args.mock)   # M: interaction records (docs/MONITORING.md)
 
     n = 0
     with open(out / "traces.jsonl", "w") as f:

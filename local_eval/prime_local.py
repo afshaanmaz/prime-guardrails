@@ -16,7 +16,7 @@ bhagwat-shubham/prime-guardrails to OpenAI-compatible local servers. Per request
   E  Evaluation:    run.py (model alone vs model + PRIME), evaluate.py (evaluator LLM), report.py.
 
 At most two PRIME model calls per request (Risk, plus Intervention when not ALLOW). Design
-decisions and open questions: DECISIONS.md.
+decisions and open questions: docs/DECISIONS.md.
 """
 from __future__ import annotations
 
