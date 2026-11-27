@@ -33,19 +33,19 @@ The record shapes and the BigQuery schemas come from one place: `INTERACTION_SCH
 ### `source` values
 | source | What |
 |---|---|
-| `pilot` | V1 pilot, backfilled from `../results/20261126-104223` (80 interactions, 40 evaluations) |
+| `pilot` | V1 pilot, backfilled from `results/20261126-104223` (80 interactions, 40 evaluations) |
 | `v1` | real eval runs (default in `config.yaml`) |
 | `test` | every `--mock` run (always, whatever the config says). Filter these out on the dashboard |
 | `prod` | reserved for production serving |
 
 Test records live in the same tables as real ones, tagged `source = test`, so the whole pipeline
 (files, tables, view, dashboard) is tested exactly as it runs. To remove them from the bucket:
-`gcloud storage rm "gs://afshaan-trial-1-prime-../results/monitoring/*/dt=*/*-mock-*.jsonl"`.
+`gcloud storage rm "gs://afshaan-trial-1-prime-results/monitoring/*/dt=*/*-mock-*.jsonl"`.
 
 ## Where it goes
 
 ```
-gs://afshaan-trial-1-prime-../results/monitoring/
+gs://afshaan-trial-1-prime-results/monitoring/
   interactions/dt=YYYY-MM-DD/<run_id>-<tag>-<seq>.jsonl
   evaluations/dt=YYYY-MM-DD/<run_id>-<tag>-<seq>.jsonl
 ```
@@ -55,19 +55,19 @@ gs://afshaan-trial-1-prime-../results/monitoring/
 - `dt` is the UTC date the file was written; use `ts` for time. `<tag>` is random per writer, so files
   never collide; backfills use the fixed tag `backfill` so re-running overwrites instead of duplicating.
 - Writes use `google-cloud-storage` if it is installed and has credentials, else `gcloud storage cp`
-  (what the VM has). If a GCS write fails, the batch is kept under `../results/monitoring/` and a warning
+  (what the VM has). If a GCS write fails, the batch is kept under `results/monitoring/` and a warning
   is printed; the run carries on.
 - A console line per request: `[M] <run_id> <dataset>/<id> <condition> action=... risk=... cat=... ms=...`.
 - `traces.jsonl` is still written per run (now with `request_id` and `pair_id`); monitoring is additive.
 
 Settings: `monitoring:` in `config.yaml` (`sink: gcs | local`, `gcs_prefix`, `source`, `flush_every`,
 `flush_seconds`, `console`). Environment overrides: `PRIME_MONITOR_SINK=gcs|local|off`,
-`PRIME_MONITOR_SOURCE=<tag>`. Mock runs write to `../results/monitoring/` unless `PRIME_MONITOR_SINK=gcs`.
+`PRIME_MONITOR_SOURCE=<tag>`. Mock runs write to `results/monitoring/` unless `PRIME_MONITOR_SINK=gcs`.
 
 ```bash
 python run.py --mock --sizes harmbench=4 xstest=8                   # local files, source=test
 PRIME_MONITOR_SINK=gcs python run.py --mock --sizes harmbench=4 xstest=8   # to the bucket, source=test
-python evaluate.py ../results/<run_id>-mock --mock                     # evaluation records, same rules
+python evaluate.py results/<run_id>-mock --mock                     # evaluation records, same rules
 ```
 
 On the VM: the job scripts check out `eval/prime-v1`, so monitoring starts there once this branch is
@@ -88,7 +88,7 @@ re-run it after changing a schema in `monitor.py`):
 External tables read the bucket at query time: no load jobs, and a new file shows up in the next query.
 Unknown JSON fields are ignored, so adding a field to the records doesn't break old queries.
 
-Backfill an old run (safe to re-run): `python infra/backfill_monitoring.py ../results/<run_id> --source pilot`.
+Backfill an old run (safe to re-run): `python infra/backfill_monitoring.py results/<run_id> --source pilot`.
 Old traces have no timestamps, so backfilled `ts` is estimated (run start + running sum of `total_ms`).
 
 ### Example queries

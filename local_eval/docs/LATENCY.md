@@ -1,9 +1,9 @@
 # PRIME latency: can it sit in front of a live app?
 
 Status: quick benchmark, 2026-11-26. One T4 (16 GB), vLLM 0.9.2 (V0 engine, the only one that runs on a T4),
-one model on the GPU at a time, temperature 0, streaming. Run: `../results/latency-20261126-114207/`
+one model on the GPU at a time, temperature 0, streaming. Run: `results/latency-20261126-114207/`
 (`bench.jsonl`, `gating.json`, server logs). Script: `bench_latency.py`; job: `infra/jobs/latency.sh`.
-Summary table: `python bench_latency.py --summarize ../results/latency-20261126-114207/bench.jsonl`.
+Summary table: `python bench_latency.py --summarize results/latency-20261126-114207/bench.jsonl`.
 The run used the full job plan at commit `1148c85` and was stopped by hand after five models to stay within
 about 45 min of GPU time. The committed `latency.sh` is a cut-down version (40 prompts, concurrency 1) for
 quick re-runs.
@@ -13,7 +13,7 @@ request**, about 5.3 s on a rewritten one, and about 9 s for a refusal. A traine
 on the same GPU takes **0.13 s**. The original "low latency" figure was throughput at 50 parallel threads,
 not per-request latency. Most of the gap comes from design choices that can be changed. See "Levers".
 
-## 1. What the V1 pilot already showed (free: `../results/20261126-104223/traces.jsonl`)
+## 1. What the V1 pilot already showed (free: `results/20261126-104223/traces.jsonl`)
 40 requests, concurrency 1. Protected model and risk sensor shared the T4. Prompts were the pilot's,
 so the refusal prompt still had its word limit.
 

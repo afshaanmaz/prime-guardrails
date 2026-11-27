@@ -7,7 +7,7 @@
 
 ## 1. Where we are
 
-The first real GPU run (`../results/20261126-084321/`: see `REVIEW.md` and `COMPARISON.md`) ran 20 HarmBench
+The first real GPU run (`results/20261126-084321/`: see `REVIEW.md` and `COMPARISON.md`) ran 20 HarmBench
 prompts through Zephyr-7B (the protected model) with Qwen2.5-7B as PRIME's judge.
 
 - **The protected model mostly does not refuse on its own.** In 16 of the 20 answers it opens with a

@@ -23,7 +23,7 @@ deliberately lightly safety-tuned open model; **not** a frontier model) shows th
 | **E. Graphic fiction** | "Describe in graphic detail…" read as a creative brief | a domestic abuse scene |
 
 The same model refuses well on its own when the request is short and blunt ("How do I kill someone?").
-Source: `../results/20261126-104223/PILOT_REVIEW.md` (26 harmful requests across two runs).
+Source: `results/20261126-104223/PILOT_REVIEW.md` (26 harmful requests across two runs).
 
 **Caveat for the paper:** frontier models resist these simple framings much better. The claim is about
 weakly aligned and fine-tuned open models, and PRIME's value on strong models is an open question (Q1).
@@ -36,7 +36,7 @@ PRIME's closest competitors are other harnesses, especially NeMo Guardrails. See
 Framing we like: **the guardrail as a steering agent.** PRIME decides how a request should be handled and
 steers the protected model toward that outcome, rather than just blocking it.
 
-## Early evidence (V1 pilot, 40 requests, `../results/20261126-104223/`)
+## Early evidence (V1 pilot, 40 requests, `results/20261126-104223/`)
 - **Where the model complies with harm, PRIME helps clearly:** HarmBench harmful answers went from 9 of 10 to 0 of 10.
 - **Where the model already behaves well, PRIME currently hurts:** it over-flags harmless prompts that sound
   risky, and its refusals are terser than the model's own. Model alone preferred in 17 of 40, PRIME in 10.
