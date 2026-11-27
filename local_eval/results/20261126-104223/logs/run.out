@@ -1,0 +1,6 @@
+harmbench  none            10 prompts   179.1s
+harmbench  prime           10 prompts    59.9s
+xstest     none            30 prompts   228.7s
+xstest     prime           30 prompts   280.1s
+
+Saved 80 traces to results/20261126-104223. Next: python evaluate.py results/20261126-104223 && python report.py results/20261126-104223
