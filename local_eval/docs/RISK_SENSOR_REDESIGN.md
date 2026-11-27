@@ -476,6 +476,6 @@ when the set of rewritten requests changes.
 | 27 Nov 2026 | REFUSE = stop with a canned per-category reply, no model call; REWRITE = redirect by rewriting the input; output rewriting ruled out | Agreed in discussion |
 | 27 Nov 2026 | medium → REWRITE in both modes; high → REFUSE under Strict, REWRITE under Loose; always-refuse categories refused in every mode | Agreed in discussion |
 | 27 Nov 2026 | Harm is defined once in the policy and read by P, R and I; the evaluator stays independent | Agreed in discussion |
-| 27 Nov 2026 | Should a rewrite show the user a short note ("I can't help with X, but here's...")? Today it's silent; monitoring logs both requests | Open |
+| 27 Nov 2026 | Rewrites stay silent: the user sees only the answer to the rewritten request, no note; monitoring logs `original_request`, `rewritten_request` and `model_input` | Agreed (Afshaan: "they don't need anything explicit") |
 
 None of these are in the code yet. Once approved, they move into `DECISIONS.md` with numbers.
