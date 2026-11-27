@@ -2,7 +2,7 @@
 
 A running log: **problem → experiment → result → next step.** Newest entries at the bottom of the log.
 The proposed flow at the top is updated whenever a run changes the picture. All times are **Pacific (PST)**.
-Supersedes `EXPERIMENT_PLAN.md` (pre-V1). Decisions: `DECISIONS.md`. Claims: `NARRATIVE.md`.
+Supersedes the pre-V1 experiment plan (deleted; see git history). Decisions: `DECISIONS.md`. Claims: `NARRATIVE.md`.
 
 ---
 
