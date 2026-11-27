@@ -19,6 +19,7 @@ taken from model cards and vendor docs via search; anything not confirmed is mar
 | Azure AI Content Safety | text, images | Fixed (4 harm categories) | none (the app decides) | Per category | **Severity 0-7** (or 0/2/4/6) |
 | Amazon Bedrock Guardrails | prompt and response | Configurable filters, denied topics | `BLOCKED` / `NONE`, decided by **the strength you configure** | Per category | **Confidence: NONE / LOW / MEDIUM / HIGH** |
 | Google Model Armor | prompt and response | Configurable filters | Match / no match at **your chosen threshold** | Per category | **Confidence: LOW / MEDIUM / HIGH** |
+| Perspective API (Jigsaw) | comments / text | Fixed attributes (e.g. TOXICITY) | none (the app decides) | Per attribute | **Probability-like score 0-1** per attribute. **Being shut down:** no new access since Feb 2026 and out of service after 2026 (likely 31 Dec 2026). Historically important (toxicity scoring), but not usable as a baseline |
 
 ## 2. The pattern
 Almost every system returns the same three things:
@@ -108,3 +109,4 @@ common denominator that keeps REWRITE meaningful across sensors.
 - Azure AI Content Safety harm categories and severity: https://learn.microsoft.com/en-au/Azure/ai-services/content-safety/concepts/harm-categories
 - Amazon Bedrock Guardrails content filters: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-content-filters-overview.html ; https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailContentFilter.html
 - Google Model Armor overview: https://docs.cloud.google.com/model-armor/overview
+- Perspective API sunset notice: https://perspectiveapi.com/ ; date reported by https://moderationapi.com/perspective-api-alternative and https://www.diariobitcoin.com/tecnologia/hindsight-ofrece-hasta-usd-1-millon-mientras-google-cierra-perspective-api/
