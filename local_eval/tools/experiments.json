@@ -1,0 +1,11 @@
+[
+  {"run_id": "20261127-034213", "name": "M0", "branch": "eval/prime-v1",
+   "changes": "Risk sensor told to score intent, not alarming words, against the policy's category definitions (D14). Refusal prompt v2: longer, varied, gives real help, supportive on self-harm, no empty offers (D12). Same 40 pilot requests as the V1 pilot.",
+   "finding": "Clear improvement on the pilot: harmless prompts flagged fell from 11/17 to 3/17. But REWRITE vanished (0 of 40): scores went to 0.0 or 0.8-0.9."},
+  {"run_id": "20261127-040815", "name": "M0b", "branch": "eval/prime-v1",
+   "changes": "Concrete LOW / MEDIUM / HIGH bands for the 0-1 score, with two questions before scoring (D16). Adds 50 OR-Bench-Hard borderline prompts (90 requests).",
+   "finding": "REWRITE still missing (1 of 90). More harmless XSTest prompts refused (10/17). PRIME's generated refusals beat Zephyr's own on blunt harmful requests."},
+  {"run_id": "20261127-071825", "name": "M0c", "branch": "feat/redesign-risk-sensor",
+   "changes": "Risk sensor redesign: returns a level (low / medium / high) and a category instead of a 0-1 score; the policy maps level to action with a table (STRICT); per-category unsafe / borderline / safe definitions; always-refuse floor; canned template refusals instead of generated ones; sensor errors kept separate from risk; guided JSON decoding.",
+   "finding": "REWRITE is back (25 of 50 OR-Bench). But 7/17 harmless XSTest prompts refused, template refusals lose to Zephyr's own, and the sensor took ~100 s per call (guided JSON)."}
+]
