@@ -1,11 +1,45 @@
 # Risk sensor redesign: design discussion and implementation plan
 
-Status: **draft for discussion, not approved.** Written 27 Nov 2026 on branch `feat/redesign-risk-sensor`
-(from `eval/prime-v1` at `f3de783`). Nothing here changes the V1 code until the design is agreed.
+Status: **design agreed in discussion; Phase 1 built (section 0).** Written 27 Nov 2026 on branch `feat/redesign-risk-sensor`
+(from `eval/prime-v1` at `f3de783`). The V1 branch (`eval/prime-v1`) is unchanged.
 Companion documents: `RISK_SENSOR_LANDSCAPE.md` (what 12 trained classifiers and moderation APIs take in
 and return), `DECISIONS.md` (D7, D14, D16; Q8, Q19, Q21, Q22), `EXPERIMENTATION_PLAN.md` (M0, M0b).
 
 ---
+
+## 0. Implementation status (Phase 1 built, 26 Nov 2026, 11 pm PST)
+
+Built on this branch; not yet run on the GPU.
+
+| Piece | Where | Notes |
+|---|---|---|
+| `RiskSignal {level, category, raw}`, `RiskSensor` interface, `LLMRiskSensor` | `risk.py` | Prompt as approved, with the output format spelled out and two made-up examples |
+| JSON enforcement | `risk.py`, `config.yaml` `risk_sensor.guided_json` | vLLM guided decoding against a schema: level and category restricted to the allowed lists |
+| Retries | `risk.py`, `prime_local.py` | Timeouts / server errors: 2 retries with backoff. Malformed reply: 1 retry. Intervention: 1 retry |
+| Errors are not risk | `prime_local.py` | Code bugs are not caught (they raise). Sensor failure after retries → `action: ERROR`, `error_stage`, `error_type`, `fallback_action`; the user gets `policy.on_sensor_error` (REFUSE by default, canned text). `fail_closed` is gone |
+| Policy | `config.yaml` `policy` | Per-category unsafe / borderline / safe and a canned refusal; topics with `about`; STRICT / LOOSE tables; `always_refuse` floor (at high only); two new floor categories: Child sexual exploitation, Mass-casualty weapons; "Safe" category dropped (category is "None") |
+| Routing | `Policy.decide(level, category)` | Floor, then table, then topic rule (only tightens). Records `decided_by`: table / floor / topic. Policy is validated at load |
+| REWRITE | `prime_local.py` | Reads intent from `raw` (or is told to infer it) and the category's unsafe / safe text |
+| REFUSE | `prime_local.py` | Canned per-category text, no model call. `policy.refusal: generated` keeps the LLM-written refusal for an ablation |
+| Monitoring | `monitor.py` | New columns: `risk_level`, `risk_raw`, `risk_error_type`, `decided_by`, `error_stage`, `error_type`, `fallback_action`; view adds `is_error`. `risk_score` kept for older records |
+| Reports | `report.py` | Action rates over decided requests; errors counted separately with types; level mix; floor / topic counts; run flagged unreliable above 1% errors |
+| Laundering check | `evaluate.py` | Evaluator adds `addresses_request: yes / partly / no` per response; report shows rewrites that changed the question |
+| Tests | `tests/` | 49 unit tests (parsing, retries, tables, floor, topics, errors, policy validation) plus a check that the policy text shares no 5-word sequence with HarmBench or XSTest prompts |
+| VM job | `infra/jobs/v1.sh` | `BRANCH` can be passed, so a run can use this branch |
+
+**Two changes to what was approved, both needed in code:**
+- **Category at any level.** The approved prompt said category "None" when level is low. That would stop topic
+  rules from working on harmless requests (a harmless competitor question must still hit the Competitors
+  rule). The prompt now asks for the category at any level; "None" only if nothing fits.
+- **Default mode is STRICT** for the first run, so harmful requests are refused (a clean comparison with M0).
+  LOOSE (high → REWRITE) is one word in `config.yaml`.
+
+**Not done yet:** label and probability sensors (Phase 2); OR-Bench overlap check (Hugging Face is blocked from
+this environment; the test runs wherever `data/orbench.csv` exists); `bench_latency.py` still uses the old
+prompts (it was already broken on `eval/prime-v1`: it imports a name that no longer exists).
+
+**Next run (M0c):** same 40 pilot + 50 OR-Bench requests, then `evaluate.py` and `report.py`:
+`infra/run-job.sh infra/jobs/v1.sh BRANCH=feat/redesign-risk-sensor SIZES="..."` (same sizes / exclusions as M0b).
 
 ## 1. Summary
 

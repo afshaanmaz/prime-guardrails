@@ -20,6 +20,7 @@ import yaml
 import data
 from monitor import Monitor, request_context
 from prime_local import Chat, Policy, Prime, gather_limited
+from risk import make_sensor
 
 CONDITIONS = ["none", "prime"]   # model alone vs model + PRIME
 
@@ -35,10 +36,14 @@ def make_client(section: dict, role: str, mock: bool):
 async def main(args):
     cfg = yaml.safe_load(open(args.config))
     g, j = cfg["generator"], cfg["risk_sensor"]
+    policy = Policy(**cfg["policy"])
+    # The risk sensor's model also runs the Intervention step (separate prompts).
+    rchat = Chat(make_client(j, "risk_sensor", args.mock), j["model"], j["max_tokens"], j["temperature"])
     prime = Prime(
         Chat(make_client(g, "generator", args.mock), g["model"], g["max_tokens"], g["temperature"]),
-        Chat(make_client(j, "risk_sensor", args.mock), j["model"], j["max_tokens"], j["temperature"]),
-        Policy(**cfg["policy"]),
+        make_sensor(j, rchat, policy),
+        policy,
+        intervener=rchat,
     )
     limit = args.limit or cfg["run"]["limit"]
     sizes = dict(kv.split("=") for kv in (args.sizes or []))

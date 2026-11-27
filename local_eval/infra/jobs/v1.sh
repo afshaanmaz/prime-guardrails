@@ -4,7 +4,7 @@
 # Uploads results/<run_id>/ (traces, meta, server logs) to gs://$BUCKET/<run_id>/.
 set -euo pipefail
 export HOME=/root PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin
-BRANCH=eval/prime-v1
+BRANCH=${BRANCH:-eval/prime-v1}   # e.g. run-job.sh infra/jobs/v1.sh BRANCH=feat/redesign-risk-sensor
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
 mkdir -p /opt && cd /opt
