@@ -24,9 +24,12 @@ generators:
   llama:                   # Meta Llama 3.1 8B Instruct, 4-bit (fp16 doesn't fit the T4); gated
     model: hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
     serve: {gpu_memory: 0.85, max_model_len: 2048}
-  gemma:                   # Google Gemma 2 9B it, 4-bit; gated. Designed for bf16; T4 runs fp16 (checked by hf-check)
+  gemma2b:                 # Google Gemma 2 2B it; gated. vLLM refuses Gemma 2 in fp16 and the T4 has no bf16,
+    model: google/gemma-2-2b-it   # so it runs in float32 (~10.5 GB)
+    serve: {gpu_memory: 0.85, max_model_len: 2048, dtype: float32}
+  gemma9b:                 # Google Gemma 2 9B it, 4-bit; gated. Needs bf16 (an L4 or newer): does NOT run on the T4
     model: hugging-quants/gemma-2-9b-it-AWQ-INT4
-    serve: {gpu_memory: 0.85, max_model_len: 2048}
+    serve: {gpu_memory: 0.85, max_model_len: 2048, dtype: bfloat16}
 
 risk_sensor:               # R: PRIME's risk sensor (risk.py); its model also runs I
   type: llm                # llm (prompted, below) | label | probability (trained guards, Phase 2)

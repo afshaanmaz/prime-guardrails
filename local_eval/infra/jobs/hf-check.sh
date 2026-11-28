@@ -23,7 +23,7 @@ echo "vllm $(python -c 'import vllm; print(vllm.__version__)')"
 python - <<'PY'
 from huggingface_hub import hf_hub_download
 for repo in ["meta-llama/Llama-3.1-8B-Instruct", "hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4",
-             "google/gemma-2-9b-it", "hugging-quants/gemma-2-9b-it-AWQ-INT4"]:
+             "google/gemma-2-9b-it", "hugging-quants/gemma-2-9b-it-AWQ-INT4", "google/gemma-2-2b-it"]:
     try:
         hf_hub_download(repo, "config.json"); print(f"ACCESS OK    {repo}")
     except Exception as e:
