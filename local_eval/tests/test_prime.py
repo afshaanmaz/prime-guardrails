@@ -68,7 +68,7 @@ def test_rewrite_without_intent_asks_to_infer():
 
 
 def test_refuse_is_canned_with_no_model_call():
-    p, gen, inter = make(sig("high", "Self-harm"))
+    p, gen, inter = make(sig("high", "Self-harm"), refusal="template")
     t = run(p)
     assert t.action == "REFUSE" and t.refusal_source == "template"
     assert "988" in t.final_output and gen.prompts == [] and inter.prompts == []
@@ -118,3 +118,65 @@ def test_model_alone_condition_untouched():
     p, gen, _ = make(sig("high", "Violence"))
     t = asyncio.run(p.run("req", "none"))
     assert t.action == "ALLOW" and t.risk is None and gen.prompts == ["req"]
+
+
+# ---- decide once, reuse for every protected model (run.py --decide-only / --decisions)
+
+class CountingSensor(FakeSensor):
+    def __init__(self, result):
+        super().__init__(result)
+        self.calls = 0
+
+    async def sense(self, request):
+        self.calls += 1
+        return await super().sense(request)
+
+
+def _decided(result, **pol):
+    from dataclasses import asdict
+    sensor = CountingSensor(result)
+    inter = FakeChat("rewritten request")
+    p = Prime(FakeChat("unused"), sensor, Policy(**{**CFG["policy"], **pol}), inter)
+    d = asdict(asyncio.run(p.decide("req")))
+    return d, sensor
+
+
+def _reuse(decision, reply="other model answer"):
+    sensor, gen, inter = CountingSensor(sig("high")), FakeChat(reply), FakeChat("never")
+    p = Prime(gen, sensor, Policy(**CFG["policy"]), inter)
+    t = asyncio.run(p.run("req", "prime", decision=decision))
+    assert sensor.calls == 0 and inter.prompts == []          # PRIME's model is never called again
+    return t, gen
+
+
+def test_decide_does_not_call_protected_model():
+    d, sensor = _decided(sig("medium", "Violence"))
+    assert sensor.calls == 1 and d["action"] == "REWRITE" and d["rewritten_request"] == "rewritten request"
+    assert d["raw_generation"] is None and d["final_output"] == ""
+
+
+def test_reuse_rewrite_sends_stored_rewrite_to_new_model():
+    d, _ = _decided(sig("medium", "Violence"))
+    t, gen = _reuse(d)
+    assert gen.prompts == ["rewritten request"] and t.final_output == "other model answer"
+    assert t.action == "REWRITE" and t.risk["level"] == "medium" and t.risk_ms == d["risk_ms"]
+
+
+def test_reuse_allow_sends_original_prompt():
+    d, _ = _decided(sig("low"))
+    t, gen = _reuse(d)
+    assert gen.prompts == ["req"] and t.action == "ALLOW"
+
+
+def test_reuse_refuse_skips_protected_model():
+    d, _ = _decided(sig("high", "Violence"), refusal="template")
+    t, gen = _reuse(d)
+    assert gen.prompts == [] and t.action == "REFUSE" and t.final_output == d["final_output"]
+
+
+def test_reuse_model_alone_ignores_decision():
+    d, _ = _decided(sig("high", "Violence"))
+    sensor, gen = CountingSensor(sig("high")), FakeChat("alone")
+    p = Prime(gen, sensor, Policy(**CFG["policy"]), FakeChat("never"))
+    t = asyncio.run(p.run("req", "none"))
+    assert gen.prompts == ["req"] and t.final_output == "alone" and sensor.calls == 0

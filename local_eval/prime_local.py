@@ -257,11 +257,15 @@ class Prime:
                 raise InterventionError("empty intervention output", "empty_output")
         raise AssertionError("unreachable")
 
-    async def run(self, prompt: str, condition: str, monitor=None, context: dict | None = None) -> Trace:
+    async def run(self, prompt: str, condition: str, monitor=None, context: dict | None = None,
+                  decision: dict | None = None) -> Trace:
         """condition: 'none' (model alone) | 'prime' (model + PRIME). With a monitor (monitor.py),
-        the interaction is recorded when the request ends; context adds ids and dataset fields."""
+        the interaction is recorded when the request ends; context adds ids and dataset fields.
+        decision: a stored PRIME decision for this request (from `decide`, saved by run.py
+        --decide-only). PRIME's R and I never see the protected model's output, so the same decision
+        applies to every protected model; with it, only the protected model is called."""
         started = time.time()
-        tr = await self._run(prompt, condition)
+        tr = await self._run(prompt, condition, decision)
         if monitor:
             monitor.record_interaction(self, prompt, tr, context, started)
         return tr
@@ -270,61 +274,75 @@ class Prime:
         tr.action, tr.error_stage, tr.error_type, tr.fallback_action = "ERROR", stage, error_type, fallback
         tr.errors.append(f"{stage}: {message}")
 
-    async def _run(self, prompt: str, condition: str) -> Trace:
-        tr = Trace(condition=condition)
+    @staticmethod
+    def needs_generation(tr: Trace) -> bool:
+        """False when PRIME's decision already produced the final answer (a refusal)."""
+        return not (tr.action == "REFUSE" or (tr.action == "ERROR" and tr.fallback_action == "REFUSE"))
+
+    async def decide(self, prompt: str) -> Trace:
+        """R + P + I for one request, without calling the protected model. The returned trace holds the
+        decision; for ALLOW / REWRITE the protected model's input is `rewritten_request` or the prompt."""
+        tr = Trace(condition="prime")
         t_start = time.perf_counter()
-        to_model = prompt
-
-        if condition == "prime":
-            v = await self.risk(prompt)
-            tr.risk, tr.risk_ms = asdict(v), v.latency_ms
-            if v.error:
-                # Not a risk judgment: recorded as an error; the user gets the policy's fallback.
-                fb = self.policy.on_sensor_error
-                self._error(tr, "risk_sensor", v.error_type, v.error, fb)
-                if fb == "REFUSE":
-                    tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(None)
-                    tr.prime_ms = tr.total_ms = (time.perf_counter() - t_start) * 1000
-                    return tr
-            else:
-                tr.action = v.action
-                if v.action in ("REWRITE", "REFUSE"):
-                    t0 = time.perf_counter()
-                    if v.action == "REWRITE":
-                        try:
-                            text = await self._intervene(REWRITE_REQUEST, prompt, v)
-                            tr.rewritten_request = to_model = text
-                        except InterventionError as e:
-                            # The decision stands but couldn't be carried out: an error, with a safe fallback.
-                            self._error(tr, "intervention", e.error_type, str(e), "REFUSE")
-                            tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(v.category)
-                    elif self.policy.refusal == "generated":
-                        try:
-                            tr.final_output = await self._intervene(REFUSAL, prompt, v)
-                            tr.refusal_source = "generated"
-                        except InterventionError as e:
-                            # Still a correct REFUSE; only the wording degraded to the canned text.
-                            tr.errors.append(f"intervention: {e}")
-                            tr.refusal_source, tr.fallback_reason = "template", f"generated_refusal_failed: {e.error_type}"
-                            tr.final_output = self.policy.refusal_text(v.category)
-                    else:
+        v = await self.risk(prompt)
+        tr.risk, tr.risk_ms = asdict(v), v.latency_ms
+        if v.error:
+            # Not a risk judgment: recorded as an error; the user gets the policy's fallback.
+            fb = self.policy.on_sensor_error
+            self._error(tr, "risk_sensor", v.error_type, v.error, fb)
+            if fb == "REFUSE":
+                tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(None)
+        else:
+            tr.action = v.action
+            if v.action in ("REWRITE", "REFUSE"):
+                t0 = time.perf_counter()
+                if v.action == "REWRITE":
+                    try:
+                        tr.rewritten_request = await self._intervene(REWRITE_REQUEST, prompt, v)
+                    except InterventionError as e:
+                        # The decision stands but couldn't be carried out: an error, with a safe fallback.
+                        self._error(tr, "intervention", e.error_type, str(e), "REFUSE")
                         tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(v.category)
-                    tr.intervention_ms = (time.perf_counter() - t0) * 1000
-            tr.prime_ms = tr.risk_ms + tr.intervention_ms
-            if tr.action == "REFUSE" or (tr.action == "ERROR" and tr.fallback_action == "REFUSE"):
-                tr.total_ms = (time.perf_counter() - t_start) * 1000
-                return tr
+                elif self.policy.refusal == "generated":
+                    try:
+                        tr.final_output = await self._intervene(REFUSAL, prompt, v)
+                        tr.refusal_source = "generated"
+                    except InterventionError as e:
+                        # Still a correct REFUSE; only the wording degraded to the canned text.
+                        tr.errors.append(f"intervention: {e}")
+                        tr.refusal_source, tr.fallback_reason = "template", f"generated_refusal_failed: {e.error_type}"
+                        tr.final_output = self.policy.refusal_text(v.category)
+                else:
+                    tr.refusal_source, tr.final_output = "template", self.policy.refusal_text(v.category)
+                tr.intervention_ms = (time.perf_counter() - t0) * 1000
+        tr.prime_ms = tr.risk_ms + tr.intervention_ms
+        tr.total_ms = (time.perf_counter() - t_start) * 1000
+        return tr
 
+    async def _run(self, prompt: str, condition: str, decision: dict | None = None) -> Trace:
+        t_start = time.perf_counter()
+        if condition != "prime":
+            tr = Trace(condition=condition)
+        elif decision is not None:
+            tr = Trace(**{k: (list(v) if k == "errors" else v) for k, v in decision.items()
+                          if k in Trace.__dataclass_fields__})
+            tr.condition, tr.raw_generation, tr.gen_ms = "prime", None, 0.0
+        else:
+            tr = await self.decide(prompt)
+        if condition == "prime" and not self.needs_generation(tr):
+            return tr
+        to_model = (tr.rewritten_request or prompt) if condition == "prime" else prompt
         try:
             out, gms = await self.gen(to_model)
         except Exception as e:  # noqa: BLE001
             if not _is_transient(e):
                 raise
             self._error(tr, "generator", "transient", f"{type(e).__name__}: {e}"[:300], None)
-            tr.total_ms = (time.perf_counter() - t_start) * 1000
+            tr.total_ms = tr.prime_ms + (time.perf_counter() - t_start) * 1000
             return tr
         tr.raw_generation, tr.gen_ms, tr.final_output = out, gms, out
-        tr.total_ms = (time.perf_counter() - t_start) * 1000
+        # PRIME's own time comes from the decision (computed once); the rest is this generation.
+        tr.total_ms = (tr.prime_ms if condition == "prime" else 0.0) + (time.perf_counter() - t_start) * 1000
         return tr
 
 

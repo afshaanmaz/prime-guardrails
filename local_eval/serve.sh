@@ -3,7 +3,9 @@
 # Each model's GPU memory share, context length and optional chat template come from
 # its `serve:` block in config.yaml. The risk sensor starts only once the generator is up, so
 # the two don't race for memory while loading.
-# Usage: ./serve.sh            (reads config.yaml)    ./serve.sh stop
+# Usage: ./serve.sh            both (reads config.yaml)        ./serve.sh stop
+#        ./serve.sh risk_sensor                               only PRIME's model (for run.py --decide-only)
+#        GENERATOR=llama ./serve.sh generator                 only a protected model from `generators:`
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
@@ -16,11 +18,15 @@ start() {  # role port
   local args
   args=$(python3 - "$1" <<'EOF'
 import sys, yaml, shlex
-c = yaml.safe_load(open("config.yaml"))[sys.argv[1]]
+import os
+cfg = yaml.safe_load(open("config.yaml"))
+c = cfg[sys.argv[1]]
+if sys.argv[1] == "generator" and os.environ.get("GENERATOR"):
+    c = {**c, **cfg["generators"][os.environ["GENERATOR"]]}
 s = c.get("serve", {})
 a = [c["model"], "--gpu-memory-utilization", str(s.get("gpu_memory", 0.42)),
      "--max-model-len", str(s.get("max_model_len", 4096)),
-     "--dtype", "half", "--enforce-eager",   # fp16 works on every GPU incl. T4; eager saves GPU memory
+     "--dtype", s.get("dtype", "half"), "--enforce-eager",   # fp16 works on every GPU incl. T4 (Gemma 2 needs float32 there); eager saves GPU memory
      # vLLM reserves 4 GB of CPU RAM per server for KV overflow by default; two servers on a
      # 15 GB host got OOM-killed. Not needed at low concurrency.
      "--swap-space", str(s.get("swap_space_gb", 0))]
@@ -40,6 +46,10 @@ EOF
   echo "$1 up on :$2"
 }
 
-start generator 8001
-start risk_sensor 8002
+case "${1:-all}" in
+  generator)   start generator 8001 ;;
+  risk_sensor) start risk_sensor 8002 ;;
+  all)         start generator 8001; start risk_sensor 8002 ;;
+  *) echo "usage: ./serve.sh [all|generator|risk_sensor|stop]"; exit 2 ;;
+esac
 nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader
