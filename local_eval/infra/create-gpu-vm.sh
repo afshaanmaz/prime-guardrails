@@ -49,7 +49,7 @@ else
             --image-family "$IMAGE_FAMILY" --image-project deeplearning-platform-release \
             --boot-disk-size "${DISK_GB}GB" --boot-disk-type pd-balanced \
             --max-run-duration "${MAX_HOURS}h" --instance-termination-action STOP \
-            --scopes storage-rw,logging-write,monitoring-write \
+            --service-account "prime-vm@$PROJECT.iam.gserviceaccount.com" --scopes cloud-platform \
             --metadata "install-nvidia-driver=True,idle-minutes=$IDLE_MINUTES" \
             --metadata-from-file startup-script=infra/startup.sh --quiet 2>&1); then
         echo "created" >&2; created="$gpu"; break 3
