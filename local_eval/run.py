@@ -29,12 +29,36 @@ from risk import make_sensor
 CONDITIONS = ["none", "prime"]   # model alone vs model + PRIME
 
 
+class RefreshingKeyClient:
+    """An OpenAI-compatible client whose API key is printed by a command (e.g. `gcloud auth
+    print-access-token` for Vertex AI) and re-read every `ttl_s` seconds. Google access tokens last
+    an hour; a full run on an API-hosted protected model takes longer."""
+
+    def __init__(self, base_url: str, key_cmd: str, timeout: float = 120, ttl_s: float = 2700):
+        from openai import AsyncOpenAI
+        self.key_cmd, self.ttl_s = key_cmd, ttl_s
+        self.client = AsyncOpenAI(base_url=base_url, api_key=self._key(), timeout=timeout)
+        self.fetched = time.time()
+
+    def _key(self) -> str:
+        return subprocess.run(self.key_cmd, shell=True, capture_output=True, text=True, check=True).stdout.strip()
+
+    @property
+    def chat(self):
+        if time.time() - self.fetched > self.ttl_s:
+            self.client.api_key, self.fetched = self._key(), time.time()
+        return self.client.chat
+
+
 def make_client(section: dict, role: str, mock: bool):
+    """A local vLLM server (no key), or a hosted API whose key comes from `api_key_cmd`."""
     if mock:
         from mock import MockClient
         return MockClient(role)
+    if section.get("api_key_cmd"):
+        return RefreshingKeyClient(section["base_url"], section["api_key_cmd"], timeout=section.get("timeout", 180))
     from openai import AsyncOpenAI
-    return AsyncOpenAI(base_url=section["base_url"], api_key="EMPTY", timeout=120)
+    return AsyncOpenAI(base_url=section["base_url"], api_key="EMPTY", timeout=section.get("timeout", 120))
 
 
 async def main(args):

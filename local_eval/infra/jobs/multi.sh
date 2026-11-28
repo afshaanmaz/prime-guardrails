@@ -56,7 +56,9 @@ fi
 for G in $GENERATORS; do
   echo "=== phase B: $G"
   ./serve.sh stop >/dev/null
-  if ! GENERATOR=$G ./serve.sh generator; then echo "phase B $G: model failed to start; skipping"; continue; fi
+  HOSTED=$(python -c "import yaml; print(bool(yaml.safe_load(open('config.yaml'))['generators']['$G'].get('hosted')))")
+  if [[ "$HOSTED" == True ]]; then echo "phase B $G: hosted API, no local server"
+  elif ! GENERATOR=$G ./serve.sh generator; then echo "phase B $G: model failed to start; skipping"; continue; fi
   python run.py --decisions "$DEC" --generator "$G" ${TITLE:+--title "$TITLE"} | tee logs/run-$G.out
   ./serve.sh stop >/dev/null
   RUN=$(ls -td results/*-"$G" | head -1); cp logs/run-$G.out "$RUN/logs/" 2>/dev/null

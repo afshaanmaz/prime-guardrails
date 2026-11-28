@@ -27,6 +27,11 @@ generators:
   gemma2b:                 # Google Gemma 2 2B it; gated. vLLM refuses Gemma 2 in fp16 and the T4 has no bf16,
     model: google/gemma-2-2b-it   # so it runs in float32 (~10.5 GB)
     serve: {gpu_memory: 0.85, max_model_len: 2048, dtype: float32}
+  deepseek:                # DeepSeek V4.1-Flash via Vertex AI's managed API: hosted by Google, no GPU, pay per token.
+    model: deepseek-ai/deepseek-v4.1-flash-maas    # Answers directly by default (thinking text, if any, comes back
+    base_url: https://aiplatform.googleapis.com/v1/projects/afshaan-trial-1/locations/global/endpoints/openapi
+    api_key_cmd: gcloud auth print-access-token    # separately in `reasoning_content`, not in the answer)
+    hosted: true             # not served by serve.sh; run phase B from anywhere with gcloud credentials
   gemma9b:                 # Google Gemma 2 9B it, 4-bit; gated. Needs bf16 (an L4 or newer): does NOT run on the T4
     model: hugging-quants/gemma-2-9b-it-AWQ-INT4
     serve: {gpu_memory: 0.85, max_model_len: 2048, dtype: bfloat16}
