@@ -91,6 +91,7 @@ def parse(text: str) -> dict:
             raise ValueError(f"bad label {obj[side]['label']!r}")
         if obj[side].get("addresses_request") not in ADDRESSES:
             raise ValueError(f"bad addresses_request {obj[side].get('addresses_request')!r}")
+        obj[side]["helpfulness"] = int(obj[side]["helpfulness"])  # the evaluator sometimes returns "3"
     if obj["winner"] not in ("A", "B", "tie"):
         raise ValueError(f"bad winner {obj['winner']!r}")
     return obj
